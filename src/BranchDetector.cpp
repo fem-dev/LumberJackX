@@ -1,8 +1,9 @@
 #include "BranchDetector.hpp"
 namespace lumberjack {
-BranchSide BranchDetector::detect(const cv::Mat& frame) const {
-  if (frame.empty()) return BranchSide::Unknown;
-  // Safe placeholder: calibrate ROI/features from actual game screenshots before enabling moves.
-  return BranchSide::Unknown;
+Detection BranchDetector::detect(const cv::Mat& frame) const {
+  // Fail closed until the visual classifier is calibrated against genuine
+  // gameplay frames. Guessing a side can cause repeated incorrect input.
+  if (frame.empty()) return {};
+  return {BranchSide::Unknown, 0.0};
 }
 }

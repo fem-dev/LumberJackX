@@ -1,33 +1,35 @@
 # LumberJackX
 
-**Version 0.2.0 — Windows 10 x64 / C++20**
+## نسخه ۰٫۲ — ویندوز ۱۰، ۶۴ بیتی، ++C20
 
-A local desktop prototype for the Telegram Desktop LumberJack mini app. It uses Win32 desktop capture and OpenCV for the preview and calibration UI.
+LumberJackX نمونه‌ای دسکتاپ برای نمایش محلی بازی LumberJack در Telegram Desktop است. دریافت تصویر با Win32 و رابط تصویری با OpenCV انجام می‌شود.
 
-## Implemented in v0.2
-- Win32 GDI screen capture with correct bitmap deselection before GetDIBits.
-- Live OpenCV preview with an overlay toolbar.
-- Add a circle by choosing ADD CIRCLE and clicking the corresponding game-control position in the preview.
-- Select a circle and label it LEFT or RIGHT. Unlabelled circles are shown in yellow.
-- Prevent START until both LEFT and RIGHT controls have been defined.
-- One START / STOP button, plus keyboard shortcuts.
-- Session timer that starts on START and stops on STOP or timeout.
-- Calibration is saved to lumberjackx.yml and restored on next launch.
-- CTest coverage for decision mapping, safe unknown detection, and configuration round-trip.
+## امکانات فعلی
+- دریافت زنده تصویر از بخشی از صفحه ویندوز.
+- نمایش پیش‌نمایش بازی همراه نوار ابزار.
+- ساخت نشانگر با «دایره جدید» و کلیک روی محل دکمه در پیش‌نمایش.
+- انتخاب نشانگر و تعیین نقش «چپ» یا «راست».
+- نمایش نشانگرهای تعیین‌نشده با رنگ زرد.
+- جلوگیری از شروع تا زمان تعیین هر دو دکمه چپ و راست.
+- دکمه واحد «شروع / توقف» و کلید میانبر S.
+- زمان‌سنج نشست و توقف خودکار پس از پایان زمان.
+- ذخیره و بازیابی تنظیمات از فایل lumberjackx.yml.
+- تست‌های اولیه برای موتور تصمیم، تشخیص امن و ذخیره/بازیابی تنظیمات.
+- رابط کاربری فارسی با پشتیبانی از نوشتار راست‌به‌چپ.
 
-## Important current limitation
-The branch detector intentionally returns Unknown for every frame. This is a fail-safe placeholder, not a finished vision model. START currently runs the session timer and status display; it does not make game moves or send mouse clicks. The next milestone is to calibrate branch recognition against real gameplay screenshots at the exact game resolution and phase. We should not enable automatic input until detection has been validated on varied frames.
+## محدودیت مهم نسخه فعلی
+موتور تشخیص شاخه فعلاً برای تمام تصاویر نتیجه «نامشخص» برمی‌گرداند. این رفتار یک حالت ایمن موقت است، نه تشخیص‌دهنده کامل. دکمه «شروع» فقط زمان‌سنج و وضعیت اجرا را فعال می‌کند؛ هنوز حرکت خودکار یا کلیک در بازی انجام نمی‌شود. تشخیص شاخه باید ابتدا روی تصاویر واقعی و متنوع طراحی و آزمایش شود.
 
-The LEFT/RIGHT circles mark the on-screen game controls. They are not branch-sensor regions.
+دایره‌های چپ و راست محل دکمه‌های کنترلی بازی را مشخص می‌کنند؛ این دایره‌ها ناحیه تشخیص شاخه نیستند.
 
-## Requirements
+## پیش‌نیازهای ساخت دستی
 - Windows 10 x64
-- Visual Studio 2022 with Desktop development with C++
-- CMake 3.20+
-- OpenCV 4.x (C++ development package and CMake config)
+- Visual Studio 2022 همراه گزینه Desktop development with C++
+- CMake نسخه ۳٫۲۰ یا جدیدتر
+- OpenCV 4.x همراه فایل پیکربندی CMake
 
-## Build
-Open Developer PowerShell:
+## ساخت دستی در ویندوز
+در Developer PowerShell اجرا کنید و مسیر OpenCV_DIR را متناسب با نصب خود تغییر دهید:
 
 ```powershell
 cmake -S . -B build -A x64 -DOpenCV_DIR="C:/opencv/build"
@@ -35,30 +37,36 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Set OpenCV_DIR to the directory that contains OpenCVConfig.cmake.
-
-## Run
-Example for a 400x700 game window whose top-left desktop position is (100, 100):
+## اجرای برنامه
+نمونه زیر برای محدوده‌ای به ابعاد ۴۰۰ در ۷۰۰ پیکسل با گوشه بالا-چپ در مختصات ۱۰۰ و ۱۰۰ است:
 
 ```powershell
 .\build\Release\LumberJackX.exe --x 100 --y 100 --width 400 --height 700 --seconds 3600
 ```
 
-Adjust the capture rectangle to cover the LumberJack mini app in Telegram Desktop. The preview adds its own toolbar above the captured image. The rectangle and marker calibration are stored in lumberjackx.yml.
+محدوده را طوری تنظیم کنید که پنجره مینی‌اپ در Telegram Desktop را پوشش دهد. تنظیمات محدوده و نشانگرها در فایل lumberjackx.yml ذخیره می‌شوند.
 
-## Controls
-- ADD CIRCLE or A: enter marker-placement mode, then click the desired control position in the game preview.
-- Click an existing circle: select it.
-- LEFT or L: label the selected circle as the left game control.
-- RIGHT or R: label the selected circle as the right game control.
-- START / STOP or S: toggle the session.
-- SAVE: write the current calibration.
-- Q or Esc: exit.
+## راهنمای دکمه‌ها
+- «دایره جدید» یا کلید A: ورود به حالت افزودن نشانگر؛ سپس روی محل دکمه در پیش‌نمایش کلیک کنید.
+- کلیک روی دایره: انتخاب نشانگر.
+- «چپ» یا کلید L: تعیین دکمه چپ برای نشانگر انتخاب‌شده.
+- «راست» یا کلید R: تعیین دکمه راست برای نشانگر انتخاب‌شده.
+- «شروع / توقف» یا کلید S: تغییر وضعیت نشست.
+- «ذخیره»: ذخیره تنظیمات.
+- کلید Q یا Esc: خروج از برنامه.
 
-## Project layout
-- include/: public interfaces and configuration types
-- src/: screen capture, calibration persistence, detector, decision engine, timer and controller
-- tests/: basic unit tests
+## ساخت خودکار با GitHub Actions
+گردش‌کار در مسیر `.github/workflows/windows-build.yml` قرار دارد.
+- با اجرای دستی گردش‌کار از زبانه Actions، برنامه ساخته و به‌صورت Artifact قابل دریافت می‌شود.
+- با فعال‌کردن گزینه انتشار و واردکردن برچسب نسخه، فایل اجرایی و بسته ZIP در GitHub Releases منتشر می‌شوند.
+- با Push کردن یک Tag مانند `v0.2.1` نیز ساخت انجام و Release همان نسخه به‌طور خودکار ایجاد می‌شود.
+- فایل ZIP شامل فایل اجرایی و DLLهای موردنیاز OpenCV است.
 
-## Scope
-All current image processing is local. The project does not inspect or modify Telegram/game servers, accounts, rooms, or score data. Use it in accordance with the game's rules.
+## ساختار پروژه
+- `include/`: تعریف رابط‌ها و ساختارهای داده
+- `src/`: دریافت تصویر، تنظیمات، تشخیص شاخه، موتور تصمیم، زمان‌سنج و کنترل‌گر
+- `tests/`: تست‌های واحد
+- `.github/workflows/`: گردش‌کار ساخت خودکار ویندوز
+
+## محدوده عملکرد
+پردازش تصویر به‌صورت محلی انجام می‌شود. برنامه اطلاعات حساب، اتاق‌ها یا سرور بازی را دست‌کاری نمی‌کند. استفاده از برنامه باید با قوانین بازی و سرویس سازگار باشد.

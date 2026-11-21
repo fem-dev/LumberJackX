@@ -23,23 +23,33 @@ jobs:
   build-windows:
     name: ساخت برنامه ویندوز x64
     runs-on: windows-2022
+    env:
+      VCPKG_INSTALLED_DIR: ${{ github.workspace }}\vcpkg_installed
     steps:
       - name: دریافت سورس
         uses: actions/checkout@v4
+
+      - name: کش کردن کتابخانه‌های vcpkg
+        uses: actions/cache@v4
+        with:
+          path: vcpkg_installed
+          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-opencv4-x64-windows-v1
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ runner.arch }}-opencv4-x64-windows-
 
       - name: نصب OpenCV با vcpkg
         shell: pwsh
         run: |
           $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
           if (-not (Test-Path $vcpkg)) { throw "vcpkg پیدا نشد: $vcpkg" }
-          & $vcpkg install 'opencv4:x64-windows' --clean-after-build
+          & $vcpkg install 'opencv4:x64-windows' --x-install-root="$env:VCPKG_INSTALLED_DIR" --clean-after-build
           if ($LASTEXITCODE -ne 0) { throw 'نصب OpenCV ناموفق بود.' }
 
       - name: پیکربندی CMake
         shell: pwsh
         run: |
           $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
-          cmake -S . -B build -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_TARGET_TRIPLET=x64-windows
+          cmake -S . -B build -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_TARGET_TRIPLET=x64-windows "-DVCPKG_INSTALLED_DIR=$env:VCPKG_INSTALLED_DIR"
           if ($LASTEXITCODE -ne 0) { throw 'پیکربندی CMake ناموفق بود.' }
 
       - name: کامپایل نسخه Release
@@ -51,7 +61,7 @@ jobs:
       - name: اجرای تست‌ها
         shell: pwsh
         run: |
-          $opencvBin = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed/x64-windows/bin'
+          $opencvBin = Join-Path $env:VCPKG_INSTALLED_DIR 'x64-windows/bin'
           $env:PATH = "$opencvBin;$env:PATH"
           ctest --test-dir build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'یک یا چند تست ناموفق بود.' }
@@ -63,7 +73,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $package | Out-Null
           cmake --install build --config Release --prefix $package
           if ($LASTEXITCODE -ne 0) { throw 'مرحله نصب CMake ناموفق بود.' }
-          $dllDir = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed/x64-windows/bin'
+          $dllDir = Join-Path $env:VCPKG_INSTALLED_DIR 'x64-windows/bin'
           Get-ChildItem $dllDir -Filter '*.dll' | Copy-Item -Destination $package -Force
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
           if (Test-Path $vswhere) {
@@ -82,9 +92,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: LumberJackX-windows-x64
-          path: |
-            package/
-            LumberJackX-windows-x64.zip
+          path: LumberJackX-windows-x64.zip
           if-no-files-found: error
           retention-days: 30
 

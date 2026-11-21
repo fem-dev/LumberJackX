@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -25,27 +26,27 @@ struct UiState {
     bool addCircleMode{false};
     bool running{false};
     int selectedMarker{-1};
-    std::string message{"Load Telegram Desktop and position the game inside the capture area."};
+    std::wstring message{L"تلگرام دسکتاپ را باز کنید و بازی را در محدوده تصویر قرار دهید."};
 
     cv::Rect addButton{8, 8, 112, 38};
-    cv::Rect leftButton{128, 8, 72, 38};
-    cv::Rect rightButton{208, 8, 78, 38};
-    cv::Rect toggleButton{294, 8, 112, 38};
-    cv::Rect saveButton{414, 8, 82, 38};
+    cv::Rect leftButton{128, 8, 64, 38};
+    cv::Rect rightButton{200, 8, 68, 38};
+    cv::Rect toggleButton{276, 8, 112, 38};
+    cv::Rect saveButton{396, 8, 82, 38};
 };
 
 UiState* g_ui = nullptr;
 
 void persist(UiState& ui) {
-    if (ui.config->save(kConfigPath)) ui.message = "Calibration saved to lumberjackx.yml";
-    else ui.message = "Could not save lumberjackx.yml";
+    if (ui.config->save(kConfigPath)) ui.message = L"تنظیمات در فایل پیکربندی ذخیره شد.";
+    else ui.message = L"ذخیره فایل پیکربندی ناموفق بود.";
 }
 
 void toggleSession(UiState& ui) {
     if (ui.running) {
         ui.running = false;
         ui.timer->stop();
-        ui.message = "Session stopped.";
+        ui.message = L"اجرا متوقف شد.";
         return;
     }
 
@@ -54,13 +55,13 @@ void toggleSession(UiState& ui) {
     const bool hasRight = std::any_of(ui.config->controls.begin(), ui.config->controls.end(),
         [](const ControlMarker& marker) { return marker.side == ControlSide::Right; });
     if (!hasLeft || !hasRight) {
-        ui.message = "Add and label both LEFT and RIGHT controls before starting.";
+        ui.message = L"ابتدا دکمه‌های چپ و راست را مشخص کنید.";
         return;
     }
 
     ui.running = true;
     ui.timer->start(ui.config->sessionSeconds);
-    ui.message = "Session started. Waiting for validated branch recognition.";
+    ui.message = L"اجرا آغاز شد؛ منتظر تشخیص معتبر شاخه هستیم.";
 }
 
 void onMouse(int event, int x, int y, int, void*) {
@@ -70,19 +71,19 @@ void onMouse(int event, int x, int y, int, void*) {
     if (y < kToolbarHeight) {
         if (ui.addButton.contains({x,y})) {
             ui.addCircleMode = true;
-            ui.message = "Click the center of a game control in the preview.";
+            ui.message = L"مرکز یکی از دکمه‌های بازی را در تصویر انتخاب کنید.";
         } else if (ui.leftButton.contains({x,y})) {
             if (ui.selectedMarker >= 0) {
                 ui.config->controls[static_cast<size_t>(ui.selectedMarker)].side = ControlSide::Left;
-                ui.message = "Selected control assigned: LEFT";
+                ui.message = L"دکمه انتخاب‌شده به‌عنوان چپ ثبت شد.";
                 persist(ui);
-            } else ui.message = "Select a circle first.";
+            } else ui.message = L"ابتدا یک دایره را انتخاب کنید.";
         } else if (ui.rightButton.contains({x,y})) {
             if (ui.selectedMarker >= 0) {
                 ui.config->controls[static_cast<size_t>(ui.selectedMarker)].side = ControlSide::Right;
-                ui.message = "Selected control assigned: RIGHT";
+                ui.message = L"دکمه انتخاب‌شده به‌عنوان راست ثبت شد.";
                 persist(ui);
-            } else ui.message = "Select a circle first.";
+            } else ui.message = L"ابتدا یک دایره را انتخاب کنید.";
         } else if (ui.toggleButton.contains({x,y})) {
             toggleSession(ui);
         } else if (ui.saveButton.contains({x,y})) {
@@ -98,7 +99,7 @@ void onMouse(int event, int x, int y, int, void*) {
         if (cv::norm(marker.point - localPoint) <= 23.0) {
             ui.selectedMarker = i;
             ui.addCircleMode = false;
-            ui.message = "Marker selected. Assign LEFT or RIGHT.";
+            ui.message = L"دایره انتخاب شد؛ جهت چپ یا راست را تعیین کنید.";
             return;
         }
     }
@@ -108,9 +109,61 @@ void onMouse(int event, int x, int y, int, void*) {
         ui.config->controls.push_back({localPoint, ControlSide::Unassigned});
         ui.selectedMarker = static_cast<int>(ui.config->controls.size()) - 1;
         ui.addCircleMode = false;
-        ui.message = "Circle added. Choose LEFT or RIGHT to label it.";
+        ui.message = L"دایره اضافه شد؛ جهت آن را مشخص کنید.";
         persist(ui);
     }
+}
+
+void drawPersianOverlay(cv::Mat& canvas, const UiState& ui, const std::wstring& status) {
+    cv::Mat bgra;
+    cv::cvtColor(canvas, bgra, cv::COLOR_BGR2BGRA);
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = bgra.cols;
+    info.bmiHeader.biHeight = -bgra.rows;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* pixels = nullptr;
+    HBITMAP dib = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    if (!dib || !pixels) { if (dib) DeleteObject(dib); return; }
+    std::memcpy(pixels, bgra.data, bgra.total() * bgra.elemSize());
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc) { DeleteObject(dib); return; }
+    HGDIOBJ previousBitmap = SelectObject(dc, dib);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, RGB(255,255,255));
+    HFONT font = CreateFontW(-17, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HGDIOBJ previousFont = font ? SelectObject(dc, font) : nullptr;
+    auto drawText = [&](const std::wstring& text, const cv::Rect& rect, UINT flags) {
+        RECT r{rect.x, rect.y, rect.x + rect.width, rect.y + rect.height};
+        DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &r,
+                  flags | DT_RTLREADING | DT_NOPREFIX | DT_SINGLELINE);
+    };
+    const UINT centered = DT_CENTER | DT_VCENTER;
+    drawText(L"دایره جدید", ui.addButton, centered);
+    drawText(L"چپ", ui.leftButton, centered);
+    drawText(L"راست", ui.rightButton, centered);
+    drawText(ui.running ? L"توقف" : L"شروع", ui.toggleButton, centered);
+    drawText(L"ذخیره", ui.saveButton, centered);
+    for (const auto& marker : ui.config->controls) {
+        const int px = marker.point.x - 14;
+        const int py = marker.point.y + kToolbarHeight - 13;
+        const std::wstring label = marker.side == ControlSide::Left ? L"چ" :
+            marker.side == ControlSide::Right ? L"ر" : L"؟";
+        drawText(label, {px, py, 28, 26}, centered);
+    }
+    drawText(status, {8, canvas.rows - 43, canvas.cols - 16, 20}, DT_RIGHT | DT_VCENTER);
+    drawText(ui.message, {8, canvas.rows - 22, canvas.cols - 16, 20}, DT_RIGHT | DT_VCENTER);
+    if (previousFont) SelectObject(dc, previousFont);
+    if (font) DeleteObject(font);
+    SelectObject(dc, previousBitmap);
+    DeleteDC(dc);
+    cv::Mat rendered(canvas.rows, canvas.cols, CV_8UC4, pixels);
+    cv::cvtColor(rendered, canvas, cv::COLOR_BGRA2BGR);
+    DeleteObject(dib);
 }
 
 void drawButton(cv::Mat& image, const cv::Rect& rect, const std::string& label, bool active=false) {
@@ -148,7 +201,7 @@ int main(int argc, char** argv) {
     if (auto v=argument(argc,argv,"--seconds")) config.sessionSeconds=std::clamp(*v,1,24*60*60);
 
     if (config.captureRegion.width < 100 || config.captureRegion.height < 100) {
-        std::cerr << "Capture region must be at least 100 x 100 pixels.\n";
+        std::cerr << L"ابعاد محدوده تصویر باید حداقل ۱۰۰ در ۱۰۰ پیکسل باشد.\n";
         return 2;
     }
 
@@ -179,11 +232,11 @@ int main(int argc, char** argv) {
             cv::Mat canvas(gameFrame.rows + kToolbarHeight, canvasWidth, CV_8UC3,
                            cv::Scalar(28,32,38));
 
-            drawButton(canvas, ui.addButton, ui.addCircleMode ? "CLICK GAME" : "ADD CIRCLE", ui.addCircleMode);
-            drawButton(canvas, ui.leftButton, "LEFT");
-            drawButton(canvas, ui.rightButton, "RIGHT");
-            drawButton(canvas, ui.toggleButton, ui.running ? "STOP" : "START", ui.running);
-            drawButton(canvas, ui.saveButton, "SAVE");
+            drawButton(canvas, ui.addButton, "", ui.addCircleMode);
+            drawButton(canvas, ui.leftButton, "");
+            drawButton(canvas, ui.rightButton, "");
+            drawButton(canvas, ui.toggleButton, "", ui.running);
+            drawButton(canvas, ui.saveButton, "");
 
             gameFrame.copyTo(canvas(cv::Rect(0,kToolbarHeight,gameFrame.cols,gameFrame.rows)));
 
@@ -196,28 +249,21 @@ int main(int argc, char** argv) {
                 cv::circle(canvas, p, 22, color, 2, cv::LINE_AA);
                 if (static_cast<int>(i) == ui.selectedMarker)
                     cv::circle(canvas, p, 27, cv::Scalar(245,245,245), 1, cv::LINE_AA);
-                const char* markerLabel = marker.side == ControlSide::Left ? "L" :
-                    marker.side == ControlSide::Right ? "R" : "?";
-                cv::putText(canvas, markerLabel,
-                            {p.x-6,p.y+6}, cv::FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv::LINE_AA);
             }
 
             const Detection detection = detector.detect(gameFrame);
-            std::string state = ui.running ? "SESSION ON" : "SESSION OFF";
+            std::wstring state = ui.running ? L"وضعیت: در حال اجرا" : L"وضعیت: متوقف";
             if (ui.running && detection.side == BranchSide::Unknown)
-                state += " | DETECTOR NOT CALIBRATED - NO INPUT";
-            if (ui.running) state += " | " + std::to_string(timer.remainingSeconds()) + "s";
-            cv::putText(canvas, state, {10,canvas.rows-25}, cv::FONT_HERSHEY_SIMPLEX,
-                        0.43, cv::Scalar(245,245,245), 1, cv::LINE_AA);
-            cv::putText(canvas, ui.message, {10,canvas.rows-8}, cv::FONT_HERSHEY_SIMPLEX,
-                        0.36, cv::Scalar(190,205,215), 1, cv::LINE_AA);
+                state += L" | تشخیص شاخه هنوز آماده نیست؛ ورودی خودکار غیرفعال است";
+            if (ui.running) state += L" | زمان باقی‌مانده: " + std::to_wstring(timer.remainingSeconds()) + L" ثانیه";
+            drawPersianOverlay(canvas, ui, state);
 
             cv::imshow(windowName, canvas);
             const int key = cv::waitKey(25);
             if (key == 27 || key == 'q' || key == 'Q') break;
             if (key == 'a' || key == 'A') {
                 ui.addCircleMode = true;
-                ui.message = "Click the center of a game control in the preview.";
+                ui.message = L"مرکز یکی از دکمه‌های بازی را در تصویر انتخاب کنید.";
             }
             if ((key == 'l' || key == 'L') && ui.selectedMarker >= 0) {
                 config.controls[static_cast<size_t>(ui.selectedMarker)].side = ControlSide::Left;
@@ -231,11 +277,11 @@ int main(int argc, char** argv) {
             if (ui.running && timer.expired()) {
                 ui.running = false;
                 timer.stop();
-                ui.message = "Session timer finished. Session stopped.";
+                ui.message = L"زمان به پایان رسید؛ اجرا متوقف شد.";
             }
         }
     } catch (const std::exception& error) {
-        std::cerr << "Fatal error: " << error.what() << '\n';
+        std::cerr << "L"خطای غیرمنتظره: " << error.what() << '\n';
         cv::destroyAllWindows();
         return 1;
     }

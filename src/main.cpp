@@ -201,7 +201,7 @@ int main(int argc, char** argv) {
     if (auto v=argument(argc,argv,"--seconds")) config.sessionSeconds=std::clamp(*v,1,24*60*60);
 
     if (config.captureRegion.width < 100 || config.captureRegion.height < 100) {
-        std::cerr << L"ابعاد محدوده تصویر باید حداقل ۱۰۰ در ۱۰۰ پیکسل باشد.\n";
+        std::cerr << "Capture area must be at least 100x100 pixels." << std::endl;
         return 2;
     }
 
@@ -281,7 +281,7 @@ int main(int argc, char** argv) {
             }
         }
     } catch (const std::exception& error) {
-        std::cerr << "L"خطای غیرمنتظره: " << error.what() << '\n';
+        std::cerr << "Fatal error: " << error.what() << std::endl;
         cv::destroyAllWindows();
         return 1;
     }

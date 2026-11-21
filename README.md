@@ -1,13 +1,16 @@
 # LumberJackX
 
-Windows 10 C++20 starter for a local, vision-assisted LumberJack game player.
+Windows 10 x64 C++20 starter for a local, vision-assisted LumberJack game helper for Telegram Desktop.
 
-## Scope
-- Captures a user-selected desktop region using Win32 GDI.
-- Uses OpenCV as the image-processing foundation.
-- Sends ordinary Left/Right keyboard input through Win32 `SendInput` when a calibrated detector is ready.
-- Tracks a configurable session timer.
-- Does not inspect or modify Telegram/game servers, accounts, scores, or room state.
+## Current prototype
+- Captures a user-selected desktop rectangle with Win32 GDI.
+- Shows a preview with a small calibration toolbar.
+- **ADD CIRCLE**: click this, then click the center of an on-screen game control in the preview.
+- Select a marker by clicking its circle, then assign it with **LEFT** or **RIGHT**.
+- **START / STOP** toggles the session state; the same button turns it off.
+- Press **Q** or **Esc** to exit.
+
+Markers are calibration points for the on-screen left/right controls. They are not branch detection zones. The automatic branch detector is still a safe placeholder, so START currently changes the session state and displays status but does not play or send clicks yet. This prevents accidental moves until the next milestone implements and tests branch recognition.
 
 ## Requirements
 - Windows 10 x64
@@ -16,19 +19,25 @@ Windows 10 C++20 starter for a local, vision-assisted LumberJack game player.
 - OpenCV 4.x with CMake package configuration
 
 ## Build
-`cmake -S . -B build -A x64 -DOpenCV_DIR="C:/opencv/build"`
-`cmake --build build --config Release`
-
-Adjust `OpenCV_DIR` to the directory containing `OpenCVConfig.cmake`.
+```powershell
+cmake -S . -B build -A x64 -DOpenCV_DIR="C:/opencv/build"
+cmake --build build --config Release
+```
+Set `OpenCV_DIR` to the folder containing `OpenCVConfig.cmake`.
 
 ## Run
-`build\\Release\\LumberJackX.exe --x 100 --y 100 --width 400 --height 600 --seconds 60`
+```powershell
+.\build\Release\LumberJackX.exe --x 100 --y 100 --width 400 --height 600 --seconds 3600
+```
+The rectangle must cover the LumberJack mini app inside Telegram Desktop. The preview toolbar is added by the program.
 
-The first milestone is verifying the capture preview. Branch detection deliberately returns Unknown until calibrated with representative screenshots, so the starter does not send gameplay inputs by default.
+## Controls
+- Add circle: toolbar button or `A`, then click a game control in the preview.
+- Select a circle: click it.
+- Assign Left: toolbar button or `L`.
+- Assign Right: toolbar button or `R`.
+- Start/Stop: toolbar button or `S`.
+- Exit: `Q` or `Esc`.
 
-## Layout
-- `include/`: public interfaces
-- `src/`: Win32 capture/input, timer, detector and decision engine
-- `tests/`: reserved for detector tests
-
-Use only normal visible keyboard input and respect the game's rules.
+## Safety and scope
+The project uses local screen capture and ordinary desktop interaction only. It does not inspect or modify Telegram/game servers, accounts, rooms, or scores. Use it in accordance with the game's rules.

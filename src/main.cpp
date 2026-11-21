@@ -167,15 +167,10 @@ void drawPersianOverlay(cv::Mat& canvas, const UiState& ui, const std::wstring& 
     DeleteObject(dib);
 }
 
-void drawButton(cv::Mat& image, const cv::Rect& rect, const std::string& label, bool active=false) {
+void drawButton(cv::Mat& image, const cv::Rect& rect, bool active=false) {
     const cv::Scalar fill = active ? cv::Scalar(65,135,65) : cv::Scalar(65,75,85);
     cv::rectangle(image, rect, fill, cv::FILLED);
     cv::rectangle(image, rect, cv::Scalar(205,215,225), 1);
-    int baseline = 0;
-    const auto size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.43, 1, &baseline);
-    const cv::Point origin{rect.x + (rect.width-size.width)/2, rect.y + (rect.height+size.height)/2};
-    cv::putText(image, label, origin, cv::FONT_HERSHEY_SIMPLEX, 0.43,
-                cv::Scalar(255,255,255), 1, cv::LINE_AA);
 }
 
 std::optional<int> argument(int argc, char** argv, const std::string& name) {
@@ -213,7 +208,7 @@ int main(int argc, char** argv) {
     UiState ui{&config, &timer};
     g_ui = &ui;
 
-    const std::string windowName = "LumberJackX | Telegram Desktop";
+    const std::string windowName = "LumberJackX | تلگرام دسکتاپ";
     cv::namedWindow(windowName, cv::WINDOW_AUTOSIZE);
     cv::setMouseCallback(windowName, onMouse);
 
@@ -233,11 +228,11 @@ int main(int argc, char** argv) {
             cv::Mat canvas(gameFrame.rows + kToolbarHeight + kFooterHeight, canvasWidth, CV_8UC3,
                            cv::Scalar(28,32,38));
 
-            drawButton(canvas, ui.addButton, "", ui.addCircleMode);
-            drawButton(canvas, ui.leftButton, "");
-            drawButton(canvas, ui.rightButton, "");
-            drawButton(canvas, ui.toggleButton, "", ui.running);
-            drawButton(canvas, ui.saveButton, "");
+            drawButton(canvas, ui.addButton, ui.addCircleMode);
+            drawButton(canvas, ui.leftButton);
+            drawButton(canvas, ui.rightButton);
+            drawButton(canvas, ui.toggleButton, ui.running);
+            drawButton(canvas, ui.saveButton);
 
             gameFrame.copyTo(canvas(cv::Rect(0,kToolbarHeight,gameFrame.cols,gameFrame.rows)));
 

@@ -34,7 +34,10 @@ int main() {
     if (!loaded.load(path)) { std::remove(path.c_str()); return 6; }
     std::remove(path.c_str());
 
-    if (loaded.captureRegion != original.captureRegion) return 7;
+    if (loaded.captureRegion.x != original.captureRegion.x ||
+        loaded.captureRegion.y != original.captureRegion.y ||
+        loaded.captureRegion.width != original.captureRegion.width ||
+        loaded.captureRegion.height != original.captureRegion.height) return 7;
     if (loaded.sessionSeconds != original.sessionSeconds) return 8;
     if (loaded.controls.size() != original.controls.size()) return 9;
     if (loaded.controls[0].side != ControlSide::Left) return 10;

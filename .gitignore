@@ -1,0 +1,18 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# CMake build output
+/build/
+/cmake-build-*/
+
+# Local app configuration and generated packages
+/lumberjackx.yml
+/package/
+/LumberJackX-windows-x64.zip
+
+# Compiled binaries
+*.exe
+*.dll
+*.pdb

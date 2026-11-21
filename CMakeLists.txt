@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(OpenCV 4 REQUIRED COMPONENTS core imgproc highgui)
+
 add_executable(LumberJackX
   src/main.cpp src/ScreenCapture.cpp src/Calibration.cpp
   src/BranchDetector.cpp src/DecisionEngine.cpp
@@ -19,4 +20,16 @@ if(MSVC)
   target_compile_options(LumberJackX PRIVATE /W4 /permissive- /EHsc)
 else()
   target_compile_options(LumberJackX PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(LumberJackXTests
+    tests/DecisionEngineTests.cpp
+    src/BranchDetector.cpp
+    src/DecisionEngine.cpp
+  )
+  target_include_directories(LumberJackXTests PRIVATE include ${OpenCV_INCLUDE_DIRS})
+  target_link_libraries(LumberJackXTests PRIVATE ${OpenCV_LIBS})
+  add_test(NAME LumberJackX.DecisionEngine COMMAND LumberJackXTests)
 endif()

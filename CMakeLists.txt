@@ -34,3 +34,5 @@ if(BUILD_TESTING)
   target_link_libraries(LumberJackXTests PRIVATE ${OpenCV_LIBS})
   add_test(NAME LumberJackX.DecisionEngine COMMAND LumberJackXTests)
 endif()
+
+install(TARGETS LumberJackX RUNTIME DESTINATION .)

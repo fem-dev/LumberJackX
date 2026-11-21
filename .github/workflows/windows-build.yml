@@ -2,6 +2,8 @@ name: ساخت نسخه ویندوز
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -12,7 +14,7 @@ on:
         type: boolean
         default: false
       release_tag:
-        description: 'برچسب نسخه برای انتشار دستی، مانند v0.2.1'
+        description: 'برچسب نسخه برای انتشار دستی، مانند v0.3.0'
         required: false
         type: string
 
@@ -21,71 +23,86 @@ permissions:
 
 jobs:
   build-windows:
-    name: ساخت برنامه ویندوز x64
+    name: ساخت و آزمون ویندوز x64
     runs-on: windows-2022
-    env:
-      VCPKG_INSTALLED_DIR: ${{ github.workspace }}\vcpkg_installed
+
     steps:
       - name: دریافت سورس
         uses: actions/checkout@v4
 
-      - name: کش کردن کتابخانه‌های vcpkg
+      - name: نصب .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: کش بسته‌های NuGet
         uses: actions/cache@v4
         with:
-          path: vcpkg_installed
-          key: vcpkg-${{ runner.os }}-${{ runner.arch }}-opencv4-x64-windows-v1
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('src-managed/**/*.csproj') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ runner.arch }}-opencv4-x64-windows-
+            nuget-${{ runner.os }}-
 
-      - name: نصب OpenCV با vcpkg
+      - name: پیکربندی کتابخانه بومی C++
         shell: pwsh
         run: |
-          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
-          if (-not (Test-Path $vcpkg)) { throw "vcpkg پیدا نشد: $vcpkg" }
-          & $vcpkg install 'opencv4:x64-windows' --x-install-root="$env:VCPKG_INSTALLED_DIR" --clean-after-build
-          if ($LASTEXITCODE -ne 0) { throw 'نصب OpenCV ناموفق بود.' }
-
-      - name: پیکربندی CMake
-        shell: pwsh
-        run: |
-          $toolchain = Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts/buildsystems/vcpkg.cmake'
-          cmake -S . -B build -A x64 "-DCMAKE_TOOLCHAIN_FILE=$toolchain" -DVCPKG_TARGET_TRIPLET=x64-windows "-DVCPKG_INSTALLED_DIR=$env:VCPKG_INSTALLED_DIR"
+          cmake -S . -B build -A x64
           if ($LASTEXITCODE -ne 0) { throw 'پیکربندی CMake ناموفق بود.' }
 
-      - name: کامپایل نسخه Release
+      - name: ساخت کتابخانه و تست‌های C++
         shell: pwsh
         run: |
           cmake --build build --config Release --parallel
-          if ($LASTEXITCODE -ne 0) { throw 'کامپایل برنامه ناموفق بود.' }
+          if ($LASTEXITCODE -ne 0) { throw 'ساخت کتابخانه بومی ناموفق بود.' }
 
-      - name: اجرای تست‌ها
+      - name: اجرای تست‌های C++
         shell: pwsh
         run: |
-          $opencvBin = Join-Path $env:VCPKG_INSTALLED_DIR 'x64-windows/bin'
-          $env:PATH = "$opencvBin;$env:PATH"
           ctest --test-dir build -C Release --output-on-failure
-          if ($LASTEXITCODE -ne 0) { throw 'یک یا چند تست ناموفق بود.' }
+          if ($LASTEXITCODE -ne 0) { throw 'تست‌های C++ ناموفق بودند.' }
 
-      - name: آماده‌سازی بسته قابل اجرا
+      - name: بازیابی وابستگی‌های برنامه
         shell: pwsh
         run: |
-          $package = Join-Path $PWD 'package'
-          New-Item -ItemType Directory -Force -Path $package | Out-Null
-          cmake --install build --config Release --prefix $package
-          if ($LASTEXITCODE -ne 0) { throw 'مرحله نصب CMake ناموفق بود.' }
-          $dllDir = Join-Path $env:VCPKG_INSTALLED_DIR 'x64-windows/bin'
-          Get-ChildItem $dllDir -Filter '*.dll' | Copy-Item -Destination $package -Force
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-          if (Test-Path $vswhere) {
-            $vsPath = & $vswhere -latest -products '*' -property installationPath
-            $redistRoot = Join-Path $vsPath 'VC/Redist/MSVC'
-            if (Test-Path $redistRoot) {
-              $redist = Get-ChildItem $redistRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
-              $crtPath = Join-Path $redist.FullName 'x64/Microsoft.VC143.CRT'
-              if (Test-Path $crtPath) { Get-ChildItem $crtPath -Filter '*.dll' | Copy-Item -Destination $package -Force }
-            }
+          dotnet restore src-managed/LumberJackX.App/LumberJackX.App.csproj --runtime win-x64
+          if ($LASTEXITCODE -ne 0) { throw 'بازیابی وابستگی‌های برنامه ناموفق بود.' }
+          dotnet restore src-managed/LumberJackX.Tests/LumberJackX.Tests.csproj
+          if ($LASTEXITCODE -ne 0) { throw 'بازیابی وابستگی‌های تست ناموفق بود.' }
+
+      - name: ساخت برنامه و تست‌های مدیریت‌شده
+        shell: pwsh
+        run: |
+          dotnet build src-managed/LumberJackX.App/LumberJackX.App.csproj --configuration Release --runtime win-x64 --no-restore
+          if ($LASTEXITCODE -ne 0) { throw 'ساخت برنامه WinForms ناموفق بود.' }
+          dotnet build src-managed/LumberJackX.Tests/LumberJackX.Tests.csproj --configuration Release --no-restore
+          if ($LASTEXITCODE -ne 0) { throw 'ساخت تست‌های مدیریت‌شده ناموفق بود.' }
+
+      - name: اجرای تست‌های مدیریت‌شده
+        shell: pwsh
+        run: |
+          dotnet run --project src-managed/LumberJackX.Tests/LumberJackX.Tests.csproj --configuration Release --no-build
+          if ($LASTEXITCODE -ne 0) { throw 'تست‌های مدیریت‌شده ناموفق بودند.' }
+
+      - name: انتشار نسخه سبک ویندوز
+        shell: pwsh
+        run: |
+          dotnet publish src-managed/LumberJackX.App/LumberJackX.App.csproj --configuration Release --runtime win-x64 --self-contained false --no-restore -p:DebugType=None -p:DebugSymbols=false
+          if ($LASTEXITCODE -ne 0) { throw 'انتشار برنامه ناموفق بود.' }
+
+          $publishDir = Join-Path $PWD 'src-managed/LumberJackX.App/bin/Release/net10.0-windows/win-x64/publish'
+          $nativeDll = Get-ChildItem -Path (Join-Path $PWD 'build') -Filter 'LumberJackVision.dll' -Recurse | Select-Object -First 1
+          if (-not $nativeDll) { throw 'LumberJackVision.dll ساخته نشد.' }
+          Copy-Item $nativeDll.FullName -Destination $publishDir -Force
+
+          if (-not (Test-Path (Join-Path $publishDir 'LumberJackX.exe'))) {
+            throw 'فایل اجرایی LumberJackX.exe در خروجی انتشار پیدا نشد.'
           }
-          Copy-Item README.md (Join-Path $package 'راهنمای-فارسی.md')
+
+          $package = Join-Path $PWD 'package'
+          if (Test-Path $package) { Remove-Item $package -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $package | Out-Null
+          Copy-Item (Join-Path $publishDir '*') -Destination $package -Recurse -Force
+          Copy-Item README.md (Join-Path $package 'README.md')
           Compress-Archive -Path (Join-Path $package '*') -DestinationPath 'LumberJackX-windows-x64.zip' -Force
 
       - name: بارگذاری خروجی ساخت
@@ -103,19 +120,17 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
-            throw 'برای انتشار دستی باید release_tag را مانند v0.2.1 وارد کنید.'
+            throw 'برای انتشار دستی باید release_tag را مانند v0.3.0 وارد کنید.'
           }
 
       - name: انتشار در GitHub Releases
         if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
-          name: LumberJackX ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
+          name: LumberJackX ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
           generate_release_notes: true
-          files: |
-            package/LumberJackX.exe
-            LumberJackX-windows-x64.zip
+          files: LumberJackX-windows-x64.zip
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -7,10 +7,15 @@
 /build/
 /cmake-build-*/
 
-# Local app configuration and generated packages
-/lumberjackx.yml
+# .NET build output
+**/bin/
+**/obj/
+
+# Local configuration and generated packages
 /package/
-/LumberJackX-windows-x64.zip
+/artifacts/
+lumberjackx.yml
+LumberJackX-windows-x64.zip
 
 # Compiled binaries
 *.exe

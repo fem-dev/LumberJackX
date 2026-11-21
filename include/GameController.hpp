@@ -1,5 +1,8 @@
 #pragma once
-#include "DecisionEngine.hpp"
+#include <opencv2/core.hpp>
 namespace lumberjack {
-class GameController { public: bool press(Move move, unsigned int holdMilliseconds = 35) const; };
+class GameController {
+public:
+  bool clickAt(const cv::Point& desktopPoint) const;
+};
 }

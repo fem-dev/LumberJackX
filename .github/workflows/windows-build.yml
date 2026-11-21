@@ -51,6 +51,8 @@ jobs:
       - name: اجرای تست‌ها
         shell: pwsh
         run: |
+          $opencvBin = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed/x64-windows/bin'
+          $env:PATH = "$opencvBin;$env:PATH"
           ctest --test-dir build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) { throw 'یک یا چند تست ناموفق بود.' }
 
@@ -63,6 +65,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'مرحله نصب CMake ناموفق بود.' }
           $dllDir = Join-Path $env:VCPKG_INSTALLATION_ROOT 'installed/x64-windows/bin'
           Get-ChildItem $dllDir -Filter '*.dll' | Copy-Item -Destination $package -Force
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          if (Test-Path $vswhere) {
+            $vsPath = & $vswhere -latest -products '*' -property installationPath
+            $redistRoot = Join-Path $vsPath 'VC/Redist/MSVC'
+            if (Test-Path $redistRoot) {
+              $redist = Get-ChildItem $redistRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+              $crtPath = Join-Path $redist.FullName 'x64/Microsoft.VC143.CRT'
+              if (Test-Path $crtPath) { Get-ChildItem $crtPath -Filter '*.dll' | Copy-Item -Destination $package -Force }
+            }
+          }
           Copy-Item README.md (Join-Path $package 'راهنمای-فارسی.md')
           Compress-Archive -Path (Join-Path $package '*') -DestinationPath 'LumberJackX-windows-x64.zip' -Force
 

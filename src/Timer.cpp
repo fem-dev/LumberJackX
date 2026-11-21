@@ -1,5 +1,6 @@
 #include "Timer.hpp"
 #include <algorithm>
+#include <cstdint>
 namespace lumberjack {
 Timer::Timer(int seconds) { start(seconds); }
 void Timer::start(int seconds) {

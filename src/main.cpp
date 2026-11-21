@@ -17,6 +17,7 @@ namespace {
 using namespace lumberjack;
 
 constexpr int kToolbarHeight = 58;
+constexpr int kFooterHeight = 48;
 constexpr int kCanvasMinWidth = 610;
 constexpr const char* kConfigPath = "lumberjackx.yml";
 
@@ -229,7 +230,7 @@ int main(int argc, char** argv) {
             });
 
             const int canvasWidth = std::max(kCanvasMinWidth, gameFrame.cols);
-            cv::Mat canvas(gameFrame.rows + kToolbarHeight, canvasWidth, CV_8UC3,
+            cv::Mat canvas(gameFrame.rows + kToolbarHeight + kFooterHeight, canvasWidth, CV_8UC3,
                            cv::Scalar(28,32,38));
 
             drawButton(canvas, ui.addButton, "", ui.addCircleMode);

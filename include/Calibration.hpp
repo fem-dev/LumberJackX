@@ -2,15 +2,12 @@
 #include <opencv2/core.hpp>
 #include <string>
 #include <vector>
-
 namespace lumberjack {
-enum class ControlSide { Left, Right };
-
+enum class ControlSide { Unassigned, Left, Right };
 struct ControlMarker {
-    cv::Point point; // Coordinates relative to the captured game region.
-    ControlSide side;
+    cv::Point point; // Relative to the captured game region.
+    ControlSide side{ControlSide::Unassigned};
 };
-
 struct AppConfig {
     cv::Rect captureRegion{100, 100, 400, 600};
     std::vector<ControlMarker> controls;

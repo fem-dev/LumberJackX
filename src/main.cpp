@@ -62,11 +62,20 @@ void onMouse(int event, int x, int y, int, void*) {
                 persist(ui);
             } else ui.message = "Select a circle first.";
         } else if (ui.toggleButton.contains({x,y})) {
-            ui.running = !ui.running;
-            if (ui.running) {
+            if (!ui.running) {
+                const bool hasLeft = std::any_of(ui.config->controls.begin(), ui.config->controls.end(),
+                    [](const ControlMarker& m) { return m.side == ControlSide::Left; });
+                const bool hasRight = std::any_of(ui.config->controls.begin(), ui.config->controls.end(),
+                    [](const ControlMarker& m) { return m.side == ControlSide::Right; });
+                if (!hasLeft || !hasRight) {
+                    ui.message = "Add and label both LEFT and RIGHT controls before starting.";
+                    return;
+                }
+                ui.running = true;
                 ui.timer->start(ui.config->sessionSeconds);
-                ui.message = "Session started. Automation is waiting for a validated branch detector.";
+                ui.message = "Session started. Waiting for validated branch recognition.";
             } else {
+                ui.running = false;
                 ui.timer->stop();
                 ui.message = "Session stopped.";
             }
@@ -90,7 +99,7 @@ void onMouse(int event, int x, int y, int, void*) {
 
     if (ui.addCircleMode && x >= 0 && x < ui.config->captureRegion.width &&
         localPoint.y >= 0 && localPoint.y < ui.config->captureRegion.height) {
-        ui.config->controls.push_back({localPoint, ControlSide::Left});
+        ui.config->controls.push_back({localPoint, ControlSide::Unassigned});
         ui.selectedMarker = static_cast<int>(ui.config->controls.size()) - 1;
         ui.addCircleMode = false;
         ui.message = "Circle added. Choose LEFT or RIGHT to label it.";
@@ -175,12 +184,15 @@ int main(int argc, char** argv) {
             for (size_t i=0; i<config.controls.size(); ++i) {
                 const auto& marker = config.controls[i];
                 const cv::Point p{marker.point.x, marker.point.y+kToolbarHeight};
-                const cv::Scalar color = marker.side == ControlSide::Left
-                    ? cv::Scalar(80,220,100) : cv::Scalar(80,170,255);
+                const cv::Scalar color = marker.side == ControlSide::Left ? cv::Scalar(80,220,100) :
+                    marker.side == ControlSide::Right ? cv::Scalar(80,170,255) :
+                    cv::Scalar(0,220,255);
                 cv::circle(canvas, p, 22, color, 2, cv::LINE_AA);
                 if (static_cast<int>(i) == ui.selectedMarker)
                     cv::circle(canvas, p, 27, cv::Scalar(245,245,245), 1, cv::LINE_AA);
-                cv::putText(canvas, marker.side == ControlSide::Left ? "L" : "R",
+                const char* markerLabel = marker.side == ControlSide::Left ? "L" :
+                    marker.side == ControlSide::Right ? "R" : "?";
+                cv::putText(canvas, markerLabel,
                             {p.x-6,p.y+6}, cv::FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv::LINE_AA);
             }
 

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using LumberJackX.Core;
 
@@ -22,6 +23,8 @@ internal sealed class PreviewSurface : Control
             true);
     }
 
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public int SelectedMarkerIndex { get; set; } = -1;
 
     public event Action<PixelPoint>? ImagePointClicked;

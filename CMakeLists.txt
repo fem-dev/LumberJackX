@@ -28,6 +28,7 @@ if(BUILD_TESTING)
     tests/DecisionEngineTests.cpp
     src/BranchDetector.cpp
     src/DecisionEngine.cpp
+    src/Calibration.cpp
   )
   target_include_directories(LumberJackXTests PRIVATE include ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(LumberJackXTests PRIVATE ${OpenCV_LIBS})

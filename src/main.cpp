@@ -41,6 +41,28 @@ void persist(UiState& ui) {
     else ui.message = "Could not save lumberjackx.yml";
 }
 
+void toggleSession(UiState& ui) {
+    if (ui.running) {
+        ui.running = false;
+        ui.timer->stop();
+        ui.message = "Session stopped.";
+        return;
+    }
+
+    const bool hasLeft = std::any_of(ui.config->controls.begin(), ui.config->controls.end(),
+        [](const ControlMarker& marker) { return marker.side == ControlSide::Left; });
+    const bool hasRight = std::any_of(ui.config->controls.begin(), ui.config->controls.end(),
+        [](const ControlMarker& marker) { return marker.side == ControlSide::Right; });
+    if (!hasLeft || !hasRight) {
+        ui.message = "Add and label both LEFT and RIGHT controls before starting.";
+        return;
+    }
+
+    ui.running = true;
+    ui.timer->start(ui.config->sessionSeconds);
+    ui.message = "Session started. Waiting for validated branch recognition.";
+}
+
 void onMouse(int event, int x, int y, int, void*) {
     if (!g_ui || event != cv::EVENT_LBUTTONDOWN) return;
     UiState& ui = *g_ui;
@@ -62,23 +84,7 @@ void onMouse(int event, int x, int y, int, void*) {
                 persist(ui);
             } else ui.message = "Select a circle first.";
         } else if (ui.toggleButton.contains({x,y})) {
-            if (!ui.running) {
-                const bool hasLeft = std::any_of(ui.config->controls.begin(), ui.config->controls.end(),
-                    [](const ControlMarker& m) { return m.side == ControlSide::Left; });
-                const bool hasRight = std::any_of(ui.config->controls.begin(), ui.config->controls.end(),
-                    [](const ControlMarker& m) { return m.side == ControlSide::Right; });
-                if (!hasLeft || !hasRight) {
-                    ui.message = "Add and label both LEFT and RIGHT controls before starting.";
-                    return;
-                }
-                ui.running = true;
-                ui.timer->start(ui.config->sessionSeconds);
-                ui.message = "Session started. Waiting for validated branch recognition.";
-            } else {
-                ui.running = false;
-                ui.timer->stop();
-                ui.message = "Session stopped.";
-            }
+            toggleSession(ui);
         } else if (ui.saveButton.contains({x,y})) {
             persist(ui);
         }
@@ -92,7 +98,7 @@ void onMouse(int event, int x, int y, int, void*) {
         if (cv::norm(marker.point - localPoint) <= 23.0) {
             ui.selectedMarker = i;
             ui.addCircleMode = false;
-            ui.message = "Marker selected. Assign LEFT or RIGHT, or drag is not required.";
+            ui.message = "Marker selected. Assign LEFT or RIGHT.";
             return;
         }
     }
@@ -221,11 +227,7 @@ int main(int argc, char** argv) {
                 config.controls[static_cast<size_t>(ui.selectedMarker)].side = ControlSide::Right;
                 persist(ui);
             }
-            if (key == 's' || key == 'S') {
-                ui.running = !ui.running;
-                if (ui.running) timer.start(config.sessionSeconds);
-                else timer.stop();
-            }
+            if (key == 's' || key == 'S') toggleSession(ui);
             if (ui.running && timer.expired()) {
                 ui.running = false;
                 timer.stop();

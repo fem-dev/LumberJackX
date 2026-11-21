@@ -32,7 +32,7 @@ jobs:
         run: |
           $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT 'vcpkg.exe'
           if (-not (Test-Path $vcpkg)) { throw "vcpkg پیدا نشد: $vcpkg" }
-          & $vcpkg install 'opencv[core,highgui,imgproc]:x64-windows' --clean-after-build
+          & $vcpkg install 'opencv4:x64-windows' --clean-after-build
           if ($LASTEXITCODE -ne 0) { throw 'نصب OpenCV ناموفق بود.' }
 
       - name: پیکربندی CMake

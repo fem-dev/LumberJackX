@@ -360,7 +360,7 @@ class LumberJackEnv(gym.Env):
             "outcome": outcome,
         }
         with TRAINING_LOG.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(entry) + "\\n")
+            file.write(json.dumps(entry) + "\n")
         print(f"[LEARN] {outcome}: {reward:+.0f} chocolates", flush=True)
 
     def close(self):

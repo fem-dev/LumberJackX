@@ -191,6 +191,14 @@ class LumberJackBot:
         self.last_action = time.monotonic()
 
     def run(self) -> None:
+        print("[INFO] Switch to the LumberJack game window. Starting in 5 seconds...", flush=True)
+        for remaining in range(5, 0, -1):
+            if self.stop_requested:
+                print("[STOP] Bot stopped.", flush=True)
+                return
+            print(f"[INFO] Starting in {remaining}...", flush=True)
+            time.sleep(1)
+
         self.window = self.find_window()
         print(
             f"[OK] Game window found: {self.window.title} "

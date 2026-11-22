@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import random
 import re
 import sys
 from pathlib import Path
@@ -11,6 +10,10 @@ from dataclasses import dataclass
 import cv2
 import mss
 import numpy as np
+import gymnasium as gym
+from gymnasium import spaces
+from stable_baselines3 import DQN
+from stable_baselines3.common.callbacks import BaseCallback
 import pyautogui
 import pygetwindow as gw
 from pynput.keyboard import Controller, Key, Listener
@@ -21,10 +24,9 @@ STOP_KEY = Key.esc
 
 ACTION_INTERVAL = 0.16
 LOOP_DELAY = 0.025
-MODEL_FILE = Path(__file__).with_name("chocolate_model.json")
+MODEL_FILE = Path(__file__).with_name("lumberjack_dqn.zip")
+REPLAY_FILE = Path(__file__).with_name("lumberjack_replay_buffer.pkl")
 TRAINING_LOG = Path(__file__).with_name("training_log.jsonl")
-LEARNING_RATE = 0.25
-EPSILON = 0.12
 
 # HSV ranges tuned from the supplied game screenshots.
 GREEN_LOW = np.array([35, 60, 70], dtype=np.uint8)
@@ -72,82 +74,6 @@ class LumberJackBot:
         if key == STOP_KEY:
             self.stop_requested = True
             return False
-
-    def load_model(self) -> dict:
-        if MODEL_FILE.exists():
-            try:
-                data = json.loads(MODEL_FILE.read_text(encoding="utf-8"))
-                data.setdefault("chocolates", 0)
-                data.setdefault("successful_actions", 0)
-                data.setdefault("deaths", 0)
-                data.setdefault("q_values", {})
-                return data
-            except (OSError, json.JSONDecodeError):
-                print("[WARN] Could not read saved model; creating a fresh one.", flush=True)
-
-        data = {
-            "version": 1,
-            "chocolates": 0,
-            "successful_actions": 0,
-            "deaths": 0,
-            "q_values": {},
-            "initial_knowledge": {
-                "state_features": ["player_side", "nearest_branch_side"],
-                "actions": ["left", "right"],
-                "prior_rule": "Prefer the side opposite the nearest branch.",
-                "reward_rule": "Survived move: +1 chocolate; detected death: -5 chocolates."
-            }
-        }
-        self.model = data
-        self.save_model()
-        return data
-
-    def save_model(self) -> None:
-        temp = MODEL_FILE.with_suffix(".tmp")
-        temp.write_text(json.dumps(self.model, indent=2), encoding="utf-8")
-        temp.replace(MODEL_FILE)
-
-    def learn(self, reward: int, outcome: str) -> None:
-        if self.pending_action is None:
-            return
-        state, action = self.pending_action
-        values = self.model["q_values"].setdefault(state, {})
-        old = values.get(action, 0.0)
-        values[action] = old + 0.25 * (reward - old)
-        self.model["chocolates"] += reward
-        if reward > 0:
-            self.model["successful_actions"] += 1
-        else:
-            self.model["deaths"] += 1
-
-        entry = {
-            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "state": state, "action": action, "reward": reward,
-            "outcome": outcome, "chocolates_total": self.model["chocolates"],
-            "q_value": round(values[action], 4)
-        }
-        with TRAINING_LOG.open("a", encoding="utf-8") as file:
-            file.write(json.dumps(entry) + "\n")
-        self.save_model()
-        print(
-            f"[LEARN] {outcome}: {reward:+d} chocolates | "
-            f"Total: {self.model['chocolates']} | "
-            f"Moves: {self.model['successful_actions']} | Deaths: {self.model['deaths']}",
-            flush=True
-        )
-        self.pending_action = None
-
-    def choose_action(self, player_side: str, branch_side: str) -> tuple[str, str]:
-        state = f"player={player_side}|branch={branch_side}"
-        values = self.model["q_values"].setdefault(state, {})
-        preferred = "right" if branch_side == "left" else "left"
-        values.setdefault(preferred, 0.5)
-        values.setdefault("left" if preferred == "right" else "right", -0.25)
-        if random.random() < 0.12:
-            action = random.choice(["left", "right"])
-        else:
-            action = max(["left", "right"], key=lambda key: values.get(key, 0.0))
-        return state, action
 
     def find_window(self) -> GameWindow:
         visible_windows = []
@@ -294,57 +220,53 @@ class LumberJackBot:
             f"({self.window.width}x{self.window.height})",
             flush=True,
         )
-        print("[INFO] Automatic detection is running. Press Esc to stop.", flush=True)
+        env = LumberJackEnv(self)
+        if MODEL_FILE.exists():
+            print("[INFO] Loading pretrained DQN checkpoint...", flush=True)
+            model = DQN.load(str(MODEL_FILE), env=env, device="auto")
+            if REPLAY_FILE.exists():
+                try:
+                    model.load_replay_buffer(str(REPLAY_FILE))
+                    print("[INFO] Previous experience replay buffer loaded.", flush=True)
+                except Exception as exc:
+                    print(f"[WARN] Could not load replay buffer: {exc}", flush=True)
+        else:
+            print("[INFO] Creating a new DQN agent with an initial safe-side heuristic.", flush=True)
+            model = DQN(
+                "MlpPolicy",
+                env,
+                learning_rate=1e-3,
+                buffer_size=20000,
+                learning_starts=30,
+                batch_size=32,
+                train_freq=1,
+                gradient_steps=1,
+                exploration_fraction=0.20,
+                exploration_initial_eps=0.80,
+                exploration_final_eps=0.05,
+                policy_kwargs={"net_arch": [64, 64]},
+                verbose=0,
+                device="auto",
+            )
 
-        while not self.stop_requested:
+        print("[INFO] DQN training and automatic play are running. Press Esc to stop.", flush=True)
+        callback = StopOnEscape(self)
+        try:
+            while not self.stop_requested:
+                model.learn(total_timesteps=256, reset_num_timesteps=False, callback=callback)
+                model.save(str(MODEL_FILE))
+                try:
+                    model.save_replay_buffer(str(REPLAY_FILE))
+                except Exception as exc:
+                    print(f"[WARN] Could not save replay buffer: {exc}", flush=True)
+                print(f"[SAVE] DQN checkpoint saved | Timesteps: {model.num_timesteps}", flush=True)
+        finally:
+            model.save(str(MODEL_FILE))
             try:
-                current = self.find_window()
-                self.window = current
-            except RuntimeError:
-                time.sleep(0.3)
-                continue
-
-            frame = self.capture()
-
-            player_side = self.detect_player_side(frame)
-            game_over_visible = self.start_or_retry_button_visible(frame)
-
-            if game_over_visible and player_side is None:
-                self.learn(-5, "death detected")
-                self.click_play_or_retry()
-                continue
-
-            if player_side is not None and self.pending_action is not None:
-                self.learn(+1, "survived previous move")
-
-            if game_over_visible:
-                self.click_play_or_retry()
-                continue
-
-            branch_side = self.detect_nearest_branch_side(frame)
-
-            if player_side is None:
-                self.set_state_message("Waiting for the game screen...")
-                time.sleep(LOOP_DELAY)
-                continue
-
-            if branch_side is None:
-                self.set_state_message("Player detected; waiting for a branch...")
-                time.sleep(LOOP_DELAY)
-                continue
-
-            state, target_side = self.choose_action(player_side, branch_side)
-
-            if time.monotonic() - self.last_action >= ACTION_INTERVAL:
-                self.press(target_side)
-                self.pending_action = (state, target_side)
-                self.set_state_message(
-                    f"Player: {player_side} | Nearest branch: {branch_side} | "
-                    f"Model chooses: {target_side}"
-                )
-
-            time.sleep(LOOP_DELAY)
-
+                model.save_replay_buffer(str(REPLAY_FILE))
+            except Exception:
+                pass
+            env.close()
         print("[STOP] Bot stopped.", flush=True)
 
     def set_state_message(self, message: str) -> None:
@@ -357,6 +279,103 @@ class LumberJackBot:
         self.listener.stop()
         self.sct.close()
 
+
+
+class LumberJackEnv(gym.Env):
+    """Gymnasium adapter: observations come from the game screen; rewards come from survival."""
+    metadata = {"render_modes": []}
+
+    def __init__(self, bot: LumberJackBot):
+        super().__init__()
+        self.bot = bot
+        self.action_space = spaces.Discrete(2)  # 0 = left, 1 = right
+        self.observation_space = spaces.Box(
+            low=np.array([-1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0], dtype=np.float32),
+            dtype=np.float32,
+        )
+        self.last_observation = np.zeros(2, dtype=np.float32)
+        self.episode_steps = 0
+
+    @staticmethod
+    def side_value(side: str | None) -> float:
+        if side == "left":
+            return -1.0
+        if side == "right":
+            return 1.0
+        return 0.0
+
+    def observe(self, frame: np.ndarray) -> np.ndarray:
+        player = self.bot.detect_player_side(frame)
+        branch = self.bot.detect_nearest_branch_side(frame)
+        return np.array([self.side_value(player), self.side_value(branch)], dtype=np.float32)
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        for _ in range(80):
+            if self.bot.stop_requested:
+                break
+            frame = self.bot.capture()
+            if self.bot.start_or_retry_button_visible(frame):
+                self.bot.click_play_or_retry()
+                continue
+            obs = self.observe(frame)
+            if obs[0] != 0.0:
+                self.last_observation = obs
+                self.episode_steps = 0
+                return obs, {}
+            time.sleep(0.1)
+        self.last_observation = np.zeros(2, dtype=np.float32)
+        return self.last_observation, {}
+
+    def step(self, action):
+        side = "left" if int(action) == 0 else "right"
+        self.bot.press(side)
+        time.sleep(ACTION_INTERVAL)
+        frame = self.bot.capture()
+
+        if self.bot.start_or_retry_button_visible(frame) and self.bot.detect_player_side(frame) is None:
+            reward = -5.0
+            terminated = True
+            self.episode_steps = 0
+            self.log_reward(reward, "death detected", side)
+            self.bot.click_play_or_retry()
+            next_obs = np.zeros(2, dtype=np.float32)
+        else:
+            next_obs = self.observe(frame)
+            if next_obs[0] != 0.0:
+                reward = 1.0
+                terminated = False
+                self.episode_steps += 1
+                self.log_reward(reward, "survived move", side)
+            else:
+                reward = 0.0
+                terminated = False
+        self.last_observation = next_obs
+        return next_obs, reward, terminated, False, {}
+
+    def log_reward(self, reward: float, outcome: str, action: str) -> None:
+        entry = {
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "action": action,
+            "reward": int(reward),
+            "outcome": outcome,
+        }
+        with TRAINING_LOG.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(entry) + "\\n")
+        print(f"[LEARN] {outcome}: {reward:+.0f} chocolates", flush=True)
+
+    def close(self):
+        return None
+
+
+class StopOnEscape(BaseCallback):
+    def __init__(self, bot: LumberJackBot):
+        super().__init__(verbose=0)
+        self.bot = bot
+
+    def _on_step(self) -> bool:
+        return not self.bot.stop_requested
 
 def main() -> int:
     bot = LumberJackBot()

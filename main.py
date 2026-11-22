@@ -62,12 +62,12 @@ class LumberJackBot:
                 matches.append(win)
         if not matches:
             raise RuntimeError(
-                'پنجره‌ای با عنوان شامل "LumberJack" پیدا نشد. '
-                "اول Mini App بازی را در Telegram Desktop باز کن."
+                'No window with "LumberJack" in its title was found. '
+                "Open the game Mini App in Telegram Desktop first."
             )
         win = max(matches, key=lambda item: item.width * item.height)
         if win.isMinimized:
-            raise RuntimeError("پنجره بازی minimize شده؛ آن را باز کن.")
+            raise RuntimeError("The game window is minimized. Restore it and try again.")
         return GameWindow(win.title, win.left, win.top, win.width, win.height)
 
     def capture(self) -> np.ndarray:
@@ -97,17 +97,17 @@ class LumberJackBot:
         pyautogui.moveTo(0, 0, duration=0.08)
         rel_x, rel_y = x - self.window.left, y - self.window.top
         if not (0 <= rel_x < self.window.width and 0 <= rel_y < self.window.height):
-            raise RuntimeError("نقطه انتخاب‌شده خارج از پنجره بازی بود؛ دوباره اجرا کن.")
+            raise RuntimeError("The selected point is outside the game window. Please restart.")
         return rel_x, rel_y
 
     def calibrate(self) -> None:
-        print("\n[SETUP] نشانگر موس را روی محل برخورد شاخه با سر بازیکن در سمت چپ ببر و یک بار کلیک کن.")
-        self.points["left"] = self.capture_click("[WAIT] کلیک نقطه سمت چپ...")
-        print("[OK] نقطه چپ ثبت شد.")
-        print("[SETUP] حالا محل متناظر در سمت راست را یک بار کلیک کن.")
-        self.points["right"] = self.capture_click("[WAIT] کلیک نقطه سمت راست...")
-        print("[OK] هر دو نقطه ثبت شدند؛ موس به گوشه صفحه منتقل شد.")
-        print("[TIP] این دو نقطه باید هم‌ارتفاع با محل سر بازیکن و جایی باشند که شاخه از آن عبور می‌کند.")
+        print("\n[SETUP] Move the mouse to the LEFT branch detection point, level with the player's head, and click once.")
+        self.points["left"] = self.capture_click("[WAIT] Click the LEFT point...")
+        print("[OK] LEFT point saved.")
+        print("[SETUP] Now click the matching point on the RIGHT side.")
+        self.points["right"] = self.capture_click("[WAIT] Click the RIGHT point...")
+        print("[OK] Both points saved. The cursor has been moved to the screen corner.")
+        print("[TIP] Both points should be level with the player's head, where a branch passes.")
 
     def branch_detected(self, frame: np.ndarray, side: str) -> bool:
         x, y = self.points[side]
@@ -129,10 +129,10 @@ class LumberJackBot:
 
     def run(self) -> None:
         self.window = self.find_window()
-        print(f"[OK] پنجره پیدا شد: {self.window.title} ({self.window.width}x{self.window.height})")
+        print(f"[OK] Game window found: {self.window.title} ({self.window.width}x{self.window.height})")
         self.calibrate()
-        print(f"[INFO] سرعت حرکت: هر {ACTION_INTERVAL:.2f} ثانیه؛ توقف با Esc.")
-        print("[INFO] بازی را در صفحه نگه دار؛ بات وضعیت دو نقطه را بررسی می‌کند.")
+        print(f"[INFO] Action interval: {ACTION_INTERVAL:.2f} seconds. Press Esc to stop.")
+        print("[INFO] Keep the game visible. The bot will monitor the two detection points.")
         while not self.stop_requested:
             try:
                 self.window = self.find_window()
@@ -147,7 +147,7 @@ class LumberJackBot:
                 self.press(next_side)
             time.sleep(0.025)
 
-        print("[STOP] بات متوقف شد.")
+        print("[STOP] Bot stopped.")
 
     def close(self) -> None:
         self.stop_requested = True
@@ -161,7 +161,7 @@ def main() -> int:
         bot.run()
         return 0
     except KeyboardInterrupt:
-        print("\n[STOP] توقف شد.")
+        print("\n[STOP] Stopped.")
         return 0
     except Exception as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)

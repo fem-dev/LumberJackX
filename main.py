@@ -11,15 +11,23 @@ import numpy as np
 import pyautogui
 import pygetwindow as gw
 from pynput.keyboard import Controller, Key, Listener
-from pynput.mouse import Listener as MouseListener
 
 
-WINDOW_PATTERN = re.compile(r"lumber\s*jack", re.IGNORECASE)
+WINDOW_PATTERN = re.compile(r"lumber\\s*jack", re.IGNORECASE)
 STOP_KEY = Key.esc
+
 ACTION_INTERVAL = 0.16
-PATCH_RADIUS = 5
-DARK_PIXEL_THRESHOLD = 200
-BRANCH_PIXEL_RATIO = 0.22
+LOOP_DELAY = 0.025
+
+# HSV ranges tuned from the supplied game screenshots.
+GREEN_LOW = np.array([35, 60, 70], dtype=np.uint8)
+GREEN_HIGH = np.array([90, 255, 255], dtype=np.uint8)
+RED_LOW_1 = np.array([0, 100, 70], dtype=np.uint8)
+RED_HIGH_1 = np.array([10, 255, 255], dtype=np.uint8)
+RED_LOW_2 = np.array([170, 100, 70], dtype=np.uint8)
+RED_HIGH_2 = np.array([179, 255, 255], dtype=np.uint8)
+ORANGE_LOW = np.array([5, 60, 70], dtype=np.uint8)
+ORANGE_HIGH = np.array([30, 255, 255], dtype=np.uint8)
 
 
 @dataclass
@@ -32,8 +40,12 @@ class GameWindow:
 
     @property
     def region(self) -> dict:
-        return {"left": self.left, "top": self.top,
-                "width": self.width, "height": self.height}
+        return {
+            "left": self.left,
+            "top": self.top,
+            "width": self.width,
+            "height": self.height,
+        }
 
 
 class LumberJackBot:
@@ -41,9 +53,8 @@ class LumberJackBot:
         self.keyboard = Controller()
         self.sct = mss.mss()
         self.window: GameWindow | None = None
-        self.points: dict[str, tuple[int, int]] = {}
-        self.direction = "left"
         self.last_action = 0.0
+        self.last_state_message = ""
         self.stop_requested = False
         self.listener = Listener(on_press=self.on_key_press)
         self.listener.start()
@@ -60,14 +71,17 @@ class LumberJackBot:
                 continue
             if WINDOW_PATTERN.search(win.title or ""):
                 matches.append(win)
+
         if not matches:
             raise RuntimeError(
                 'No window with "LumberJack" in its title was found. '
                 "Open the game Mini App in Telegram Desktop first."
             )
+
         win = max(matches, key=lambda item: item.width * item.height)
         if win.isMinimized:
             raise RuntimeError("The game window is minimized. Restore it and try again.")
+
         return GameWindow(win.title, win.left, win.top, win.width, win.height)
 
     def capture(self) -> np.ndarray:
@@ -75,79 +89,150 @@ class LumberJackBot:
         shot = self.sct.grab(self.window.region)
         return cv2.cvtColor(np.asarray(shot), cv2.COLOR_BGRA2BGR)
 
-    def capture_click(self, instruction: str) -> tuple[int, int]:
-        assert self.window is not None
-        if self.stop_requested:
-            raise KeyboardInterrupt
-        print(instruction, flush=True)
-        result: list[tuple[int, int]] = []
+    @staticmethod
+    def hsv(frame: np.ndarray) -> np.ndarray:
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-        def on_click(x, y, button, pressed):
-            if pressed:
-                result.append((int(x), int(y)))
-                return False
+    def start_or_retry_button_visible(self, frame: np.ndarray) -> bool:
+        """Detect the large single Play/Retry button in the lower center."""
+        height, width = frame.shape[:2]
+        hsv = self.hsv(frame)
+        mask = cv2.inRange(hsv, ORANGE_LOW, ORANGE_HIGH)
 
-        with MouseListener(on_click=on_click) as mouse_listener:
-            while mouse_listener.is_alive() and not self.stop_requested:
-                time.sleep(0.05)
-        if self.stop_requested or not result:
-            raise KeyboardInterrupt
-        x, y = result[0]
-        # Park the cursor outside the game immediately after calibration.
-        pyautogui.moveTo(0, 0, duration=0.08)
-        rel_x, rel_y = x - self.window.left, y - self.window.top
-        if not (0 <= rel_x < self.window.width and 0 <= rel_y < self.window.height):
-            raise RuntimeError("The selected point is outside the game window. Please restart.")
-        return rel_x, rel_y
-
-    def calibrate(self) -> None:
-        print("\n[SETUP] Move the mouse to the LEFT branch detection point, level with the player's head, and click once.")
-        self.points["left"] = self.capture_click("[WAIT] Click the LEFT point...")
-        print("[OK] LEFT point saved.")
-        print("[SETUP] Now click the matching point on the RIGHT side.")
-        self.points["right"] = self.capture_click("[WAIT] Click the RIGHT point...")
-        print("[OK] Both points saved. The cursor has been moved to the screen corner.")
-        print("[TIP] Both points should be level with the player's head, where a branch passes.")
-
-    def branch_detected(self, frame: np.ndarray, side: str) -> bool:
-        x, y = self.points[side]
-        r = PATCH_RADIUS
-        patch = frame[max(0, y-r):min(frame.shape[0], y+r+1),
-                      max(0, x-r):min(frame.shape[1], x+r+1)]
-        if patch.size == 0:
+        x1, x2 = int(width * 0.40), int(width * 0.60)
+        y1, y2 = int(height * 0.68), int(height * 0.86)
+        roi = mask[y1:y2, x1:x2]
+        if roi.size == 0:
             return False
-        gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
-        dark_ratio = float(np.mean(gray < DARK_PIXEL_THRESHOLD))
-        return dark_ratio >= BRANCH_PIXEL_RATIO
+
+        orange_ratio = cv2.countNonZero(roi) / float(roi.size)
+        return orange_ratio > 0.45
+
+    def detect_player_side(self, frame: np.ndarray) -> str | None:
+        """Find the red-shirt player and return the side of the tree they occupy."""
+        height, width = frame.shape[:2]
+        hsv = self.hsv(frame)
+        red1 = cv2.inRange(hsv, RED_LOW_1, RED_HIGH_1)
+        red2 = cv2.inRange(hsv, RED_LOW_2, RED_HIGH_2)
+        mask = cv2.bitwise_or(red1, red2)
+
+        x1, x2 = int(width * 0.15), int(width * 0.85)
+        y1, y2 = int(height * 0.32), int(height * 0.62)
+        roi = mask[y1:y2, x1:x2]
+        count, _, stats, _ = cv2.connectedComponentsWithStats(roi, 8)
+
+        min_area = int(width * height * 0.0015)
+        candidates = []
+        for index in range(1, count):
+            x, y, w, h, area = stats[index]
+            if area >= min_area and h >= height * 0.035:
+                candidates.append((area, x + w / 2 + x1))
+
+        if not candidates:
+            return None
+
+        _, player_x = max(candidates)
+        return "left" if player_x < width / 2 else "right"
+
+    def detect_nearest_branch_side(self, frame: np.ndarray) -> str | None:
+        """Find the lowest visible green branch, ignoring the green ground."""
+        height, width = frame.shape[:2]
+        hsv = self.hsv(frame)
+        mask = cv2.inRange(hsv, GREEN_LOW, GREEN_HIGH)
+
+        # Branches are above the grass platform in the supplied game layout.
+        y1, y2 = int(height * 0.10), int(height * 0.42)
+        roi = mask[y1:y2, :]
+        count, _, stats, _ = cv2.connectedComponentsWithStats(roi, 8)
+
+        min_area = int(width * height * 0.003)
+        min_branch_width = int(width * 0.16)
+        candidates = []
+
+        for index in range(1, count):
+            x, y, w, h, area = stats[index]
+            if area < min_area or w < min_branch_width or h < height * 0.025:
+                continue
+            center_x = x + w / 2
+            bottom_y = y + h + y1
+            side = "left" if center_x < width / 2 else "right"
+            candidates.append((bottom_y, side))
+
+        if not candidates:
+            return None
+
+        # The branch closest to the player is the lowest branch on screen.
+        return max(candidates, key=lambda item: item[0])[1]
+
+    def click_play_or_retry(self) -> None:
+        assert self.window is not None
+        x = self.window.left + int(self.window.width * 0.50)
+        y = self.window.top + int(self.window.height * 0.77)
+        pyautogui.click(x, y)
+        pyautogui.moveTo(0, 0, duration=0.05)
+        print("[INFO] Play/Retry button detected. Starting automatically.", flush=True)
+        time.sleep(1.2)
 
     def press(self, side: str) -> None:
         key = Key.left if side == "left" else Key.right
         self.keyboard.press(key)
         self.keyboard.release(key)
-        self.direction = side
         self.last_action = time.monotonic()
 
     def run(self) -> None:
         self.window = self.find_window()
-        print(f"[OK] Game window found: {self.window.title} ({self.window.width}x{self.window.height})")
-        self.calibrate()
-        print(f"[INFO] Action interval: {ACTION_INTERVAL:.2f} seconds. Press Esc to stop.")
-        print("[INFO] Keep the game visible. The bot will monitor the two detection points.")
+        print(
+            f"[OK] Game window found: {self.window.title} "
+            f"({self.window.width}x{self.window.height})",
+            flush=True,
+        )
+        print("[INFO] Automatic detection is running. Press Esc to stop.", flush=True)
+
         while not self.stop_requested:
             try:
-                self.window = self.find_window()
+                current = self.find_window()
+                self.window = current
             except RuntimeError:
                 time.sleep(0.3)
                 continue
+
             frame = self.capture()
 
-            blocked = self.branch_detected(frame, self.direction)
-            next_side = ("right" if self.direction == "left" else "left") if blocked else self.direction
-            if time.monotonic() - self.last_action >= ACTION_INTERVAL:
-                self.press(next_side)
-            time.sleep(0.025)
+            if self.start_or_retry_button_visible(frame):
+                self.click_play_or_retry()
+                continue
 
-        print("[STOP] Bot stopped.")
+            player_side = self.detect_player_side(frame)
+            branch_side = self.detect_nearest_branch_side(frame)
+
+            if player_side is None:
+                self.set_state_message("Waiting for the game screen...")
+                time.sleep(LOOP_DELAY)
+                continue
+
+            if branch_side is None:
+                self.set_state_message("Player detected; waiting for a branch...")
+                time.sleep(LOOP_DELAY)
+                continue
+
+            # Move away from the side containing the nearest branch.
+            target_side = "right" if branch_side == "left" else "left"
+
+            if time.monotonic() - self.last_action >= ACTION_INTERVAL:
+                self.press(target_side)
+                self.set_state_message(
+                    f"Player: {player_side} | Nearest branch: {branch_side} | "
+                    f"Moving: {target_side}"
+                )
+
+            time.sleep(LOOP_DELAY)
+
+        print("[STOP] Bot stopped.", flush=True)
+
+    def set_state_message(self, message: str) -> None:
+        if message != self.last_state_message:
+            print(f"[INFO] {message}", flush=True)
+            self.last_state_message = message
 
     def close(self) -> None:
         self.stop_requested = True
@@ -161,10 +246,10 @@ def main() -> int:
         bot.run()
         return 0
     except KeyboardInterrupt:
-        print("\n[STOP] Stopped.")
+        print("\\n[STOP] Stopped.", flush=True)
         return 0
     except Exception as exc:
-        print(f"[ERROR] {exc}", file=sys.stderr)
+        print(f"[ERROR] {exc}", file=sys.stderr, flush=True)
         return 1
     finally:
         bot.close()

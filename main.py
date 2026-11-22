@@ -228,7 +228,7 @@ class LumberJackBot:
         )
         env = LumberJackEnv(self)
         if MODEL_FILE.exists():
-            print("[INFO] Loading pretrained DQN checkpoint...", flush=True)
+            print("[INFO] Loading saved DQN checkpoint...", flush=True)
             model = DQN.load(str(MODEL_FILE), env=env, device="auto")
             if REPLAY_FILE.exists():
                 try:
@@ -237,7 +237,7 @@ class LumberJackBot:
                 except Exception as exc:
                     print(f"[WARN] Could not load replay buffer: {exc}", flush=True)
         else:
-            print("[INFO] Creating a new DQN agent. Initial actions will include exploration.", flush=True)
+            print("[INFO] Creating DQN agent with a built-in branch-avoidance starter strategy.", flush=True)
             model = DQN(
                 "MlpPolicy",
                 env,
@@ -318,12 +318,16 @@ class LumberJackEnv(gym.Env):
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
+        clicked_retry = False
         for _ in range(80):
             if self.bot.stop_requested:
                 break
             frame = self.bot.capture()
             if self.bot.start_or_retry_button_visible(frame):
-                self.bot.click_play_or_retry()
+                if not clicked_retry:
+                    self.bot.click_play_or_retry()
+                    clicked_retry = True
+                time.sleep(0.15)
                 continue
             obs = self.observe(frame)
             if obs[0] != 0.0:
@@ -331,32 +335,58 @@ class LumberJackEnv(gym.Env):
                 self.episode_steps = 0
                 return obs, {}
             time.sleep(0.1)
-        self.last_observation = np.zeros(2, dtype=np.float32)
-        return self.last_observation, {}
+        if self.bot.stop_requested:
+            raise RuntimeError("Bot stopped while waiting for a playable game screen.")
+        raise RuntimeError(
+            "Could not confirm that the game is playable. Check the game window and detection colors."
+        )
+
+    def choose_action_with_game_knowledge(self, action: int) -> tuple[int, str]:
+        """
+        Starter strategy: avoid the side containing the nearest visible branch.
+        DQN still chooses when no branch is confidently detected.
+        """
+        branch_value = float(self.last_observation[1])
+        if branch_value < -0.5:
+            return 1, "starter rule: branch on left, move right"
+        if branch_value > 0.5:
+            return 0, "starter rule: branch on right, move left"
+        return int(action), "DQN choice: no branch confidently detected"
 
     def step(self, action):
-        side = "left" if int(action) == 0 else "right"
+        selected_action, decision_reason = self.choose_action_with_game_knowledge(int(action))
+        side = "left" if selected_action == 0 else "right"
+        self.bot.set_state_message(f"{decision_reason}; moving {side}.")
         self.bot.press(side)
         time.sleep(ACTION_INTERVAL)
         frame = self.bot.capture()
 
-        if self.bot.start_or_retry_button_visible(frame) and self.bot.detect_player_side(frame) is None:
+        button_visible = self.bot.start_or_retry_button_visible(frame)
+        player_side = self.bot.detect_player_side(frame)
+
+        if button_visible and player_side is None:
             reward = -5.0
             terminated = True
             self.episode_steps = 0
-            self.log_reward(reward, "death detected", side)
+            self.log_reward(reward, "confirmed death screen", side)
             self.bot.click_play_or_retry()
             next_obs = np.zeros(2, dtype=np.float32)
-        else:
+        elif player_side is not None and not button_visible:
+            # Survival is credited only when the player is visible and no
+            # Play/Retry screen is detected after the action.
             next_obs = self.observe(frame)
-            if next_obs[0] != 0.0:
-                reward = 1.0
-                terminated = False
-                self.episode_steps += 1
-                self.log_reward(reward, "survived move", side)
-            else:
-                reward = 0.0
-                terminated = False
+            reward = 1.0
+            terminated = False
+            self.episode_steps += 1
+            self.log_reward(reward, "player visible after move", side)
+        else:
+            # Ambiguous screen: do not teach the model that this was a success
+            # or a death. Keep the transition reward neutral.
+            next_obs = self.observe(frame)
+            reward = 0.0
+            terminated = False
+            self.bot.set_state_message("Game state uncertain; no chocolate reward assigned.")
+
         self.last_observation = next_obs
         return next_obs, reward, terminated, False, {}
 

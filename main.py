@@ -51,7 +51,7 @@ class GameWindow:
 class LumberJackBot:
     def __init__(self) -> None:
         self.keyboard = Controller()
-        self.sct = mss.mss()
+        self.sct = mss.MSS()
         self.window: GameWindow | None = None
         self.last_action = 0.0
         self.last_state_message = ""
@@ -65,23 +65,34 @@ class LumberJackBot:
             return False
 
     def find_window(self) -> GameWindow:
-        matches = []
+        visible_windows = []
+        lumberjack_matches = []
+        telegram_matches = []
+
         for win in gw.getAllWindows():
-            if win.width < 220 or win.height < 300:
+            title = (win.title or "").strip()
+            if win.width < 220 or win.height < 300 or win.isMinimized:
                 continue
-            if WINDOW_PATTERN.search(win.title or ""):
-                matches.append(win)
+            if title:
+                visible_windows.append(title)
+            if WINDOW_PATTERN.search(title):
+                lumberjack_matches.append(win)
+            elif "telegram" in title.lower():
+                telegram_matches.append(win)
+
+        # Telegram Desktop often keeps the Mini App inside a window titled
+        # "Telegram", not "LumberJack". Prefer an exact game-title match,
+        # then fall back to the Telegram window.
+        matches = lumberjack_matches or telegram_matches
 
         if not matches:
+            titles = ", ".join(visible_windows[:12]) or "No visible titled windows"
             raise RuntimeError(
-                'No window with "LumberJack" in its title was found. '
-                "Open the game Mini App in Telegram Desktop first."
+                "Could not find a LumberJack or Telegram window. "
+                f"Visible windows: {titles}. Open the Mini App in Telegram Desktop."
             )
 
         win = max(matches, key=lambda item: item.width * item.height)
-        if win.isMinimized:
-            raise RuntimeError("The game window is minimized. Restore it and try again.")
-
         return GameWindow(win.title, win.left, win.top, win.width, win.height)
 
     def capture(self) -> np.ndarray:

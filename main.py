@@ -119,7 +119,7 @@ class LumberJackBot:
         x1, x2 = int(width * 0.15), int(width * 0.85)
         y1, y2 = int(height * 0.32), int(height * 0.62)
         roi = mask[y1:y2, x1:x2]
-        count, _, stats, _ = cv2.connectedComponentsWithStats(roi, 8)
+        count, _, stats, _ = cv2.connectedComponentsWithStats(roi, connectivity=8)
 
         min_area = int(width * height * 0.0015)
         candidates = []
@@ -143,7 +143,7 @@ class LumberJackBot:
         # Branches are above the grass platform in the supplied game layout.
         y1, y2 = int(height * 0.10), int(height * 0.42)
         roi = mask[y1:y2, :]
-        count, _, stats, _ = cv2.connectedComponentsWithStats(roi, 8)
+        count, _, stats, _ = cv2.connectedComponentsWithStats(roi, connectivity=8)
 
         min_area = int(width * height * 0.003)
         min_branch_width = int(width * 0.16)

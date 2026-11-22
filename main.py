@@ -38,7 +38,7 @@ class LumberJackBot:
         self.window: GameWindow | None = None
         self.direction: str | None = None
         self.last_action = 0.0
-        self.action_interval = 0.095
+        self.action_interval = 0.16
         self.stop_requested = False
         self.listener = Listener(on_press=self.on_key_press)
         self.listener.start()
@@ -123,7 +123,7 @@ class LumberJackBot:
         if x2 <= x1:
             return False
         row = wood[y1:y2, x1:x2]
-        threshold = max(7, int((x2 - x1) * 0.10))
+        threshold = max(10, int((x2 - x1) * 0.14))
         return int((row > 0).sum()) >= threshold
 
     @staticmethod
@@ -167,6 +167,8 @@ class LumberJackBot:
         assert self.window is not None
         print(f"[AUTO] دکمه رنگی احتمالی شروع/تکرار پیدا شد: {point}")
         pyautogui.click(self.window.left + point[0], self.window.top + point[1])
+        # Keep the pointer out of the game so it cannot cover the character or branches.
+        pyautogui.moveTo(0, 0, duration=0.08)
         time.sleep(0.8)
         self.direction = None
         return True
@@ -200,6 +202,8 @@ class LumberJackBot:
         print(f"[OK] پنجره پیدا شد: {self.window.title}")
         print(f"[OK] اندازه پنجره: {self.window.width}x{self.window.height}")
         print("[INFO] برای توقف هر زمان کلید Esc را بزن.")
+        start_candidate: tuple[int, int] | None = None
+        start_streak = 0
         while not self.stop_requested:
             try:
                 self.window = self.find_window()
@@ -207,12 +211,30 @@ class LumberJackBot:
                 time.sleep(0.3)
                 continue
             frame = self.capture()
-            if self.click_button_if_present(frame):
+
+            # Prioritize gameplay analysis. Only consider a start/replay button
+            # after the player/tree could not be recognized for several frames.
+            if self.analyze_and_play(frame):
+                start_candidate = None
+                start_streak = 0
+                time.sleep(0.025)
                 continue
-            if not self.analyze_and_play(frame):
-                time.sleep(0.04)
+
+            point = self.find_start_button(frame)
+            if point is not None:
+                if start_candidate is not None and abs(point[0] - start_candidate[0]) < 24 and abs(point[1] - start_candidate[1]) < 24:
+                    start_streak += 1
+                else:
+                    start_candidate = point
+                    start_streak = 1
+                if start_streak >= 3 and self.click_button_if_present(frame):
+                    start_candidate = None
+                    start_streak = 0
+                    continue
             else:
-                time.sleep(0.012)
+                start_candidate = None
+                start_streak = 0
+            time.sleep(0.05)
         print("[STOP] بات متوقف شد.")
 
     def close(self) -> None:

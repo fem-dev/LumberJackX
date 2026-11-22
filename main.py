@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import random
 import re
 import sys
+from pathlib import Path
 import time
 from dataclasses import dataclass
 
@@ -18,6 +21,10 @@ STOP_KEY = Key.esc
 
 ACTION_INTERVAL = 0.16
 LOOP_DELAY = 0.025
+MODEL_FILE = Path(__file__).with_name("chocolate_model.json")
+TRAINING_LOG = Path(__file__).with_name("training_log.jsonl")
+LEARNING_RATE = 0.25
+EPSILON = 0.12
 
 # HSV ranges tuned from the supplied game screenshots.
 GREEN_LOW = np.array([35, 60, 70], dtype=np.uint8)
@@ -55,6 +62,8 @@ class LumberJackBot:
         self.window: GameWindow | None = None
         self.last_action = 0.0
         self.last_state_message = ""
+        self.model = self.load_model()
+        self.pending_action = None
         self.stop_requested = False
         self.listener = Listener(on_press=self.on_key_press)
         self.listener.start()
@@ -63,6 +72,82 @@ class LumberJackBot:
         if key == STOP_KEY:
             self.stop_requested = True
             return False
+
+    def load_model(self) -> dict:
+        if MODEL_FILE.exists():
+            try:
+                data = json.loads(MODEL_FILE.read_text(encoding="utf-8"))
+                data.setdefault("chocolates", 0)
+                data.setdefault("successful_actions", 0)
+                data.setdefault("deaths", 0)
+                data.setdefault("q_values", {})
+                return data
+            except (OSError, json.JSONDecodeError):
+                print("[WARN] Could not read saved model; creating a fresh one.", flush=True)
+
+        data = {
+            "version": 1,
+            "chocolates": 0,
+            "successful_actions": 0,
+            "deaths": 0,
+            "q_values": {},
+            "initial_knowledge": {
+                "state_features": ["player_side", "nearest_branch_side"],
+                "actions": ["left", "right"],
+                "prior_rule": "Prefer the side opposite the nearest branch.",
+                "reward_rule": "Survived move: +1 chocolate; detected death: -5 chocolates."
+            }
+        }
+        self.model = data
+        self.save_model()
+        return data
+
+    def save_model(self) -> None:
+        temp = MODEL_FILE.with_suffix(".tmp")
+        temp.write_text(json.dumps(self.model, indent=2), encoding="utf-8")
+        temp.replace(MODEL_FILE)
+
+    def learn(self, reward: int, outcome: str) -> None:
+        if self.pending_action is None:
+            return
+        state, action = self.pending_action
+        values = self.model["q_values"].setdefault(state, {})
+        old = values.get(action, 0.0)
+        values[action] = old + 0.25 * (reward - old)
+        self.model["chocolates"] += reward
+        if reward > 0:
+            self.model["successful_actions"] += 1
+        else:
+            self.model["deaths"] += 1
+
+        entry = {
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "state": state, "action": action, "reward": reward,
+            "outcome": outcome, "chocolates_total": self.model["chocolates"],
+            "q_value": round(values[action], 4)
+        }
+        with TRAINING_LOG.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(entry) + "\n")
+        self.save_model()
+        print(
+            f"[LEARN] {outcome}: {reward:+d} chocolates | "
+            f"Total: {self.model['chocolates']} | "
+            f"Moves: {self.model['successful_actions']} | Deaths: {self.model['deaths']}",
+            flush=True
+        )
+        self.pending_action = None
+
+    def choose_action(self, player_side: str, branch_side: str) -> tuple[str, str]:
+        state = f"player={player_side}|branch={branch_side}"
+        values = self.model["q_values"].setdefault(state, {})
+        preferred = "right" if branch_side == "left" else "left"
+        values.setdefault(preferred, 0.5)
+        values.setdefault("left" if preferred == "right" else "right", -0.25)
+        if random.random() < 0.12:
+            action = random.choice(["left", "right"])
+        else:
+            action = max(["left", "right"], key=lambda key: values.get(key, 0.0))
+        return state, action
 
     def find_window(self) -> GameWindow:
         visible_windows = []
@@ -221,11 +306,21 @@ class LumberJackBot:
 
             frame = self.capture()
 
-            if self.start_or_retry_button_visible(frame):
+            player_side = self.detect_player_side(frame)
+            game_over_visible = self.start_or_retry_button_visible(frame)
+
+            if game_over_visible and player_side is None:
+                self.learn(-5, "death detected")
                 self.click_play_or_retry()
                 continue
 
-            player_side = self.detect_player_side(frame)
+            if player_side is not None and self.pending_action is not None:
+                self.learn(+1, "survived previous move")
+
+            if game_over_visible:
+                self.click_play_or_retry()
+                continue
+
             branch_side = self.detect_nearest_branch_side(frame)
 
             if player_side is None:
@@ -238,14 +333,14 @@ class LumberJackBot:
                 time.sleep(LOOP_DELAY)
                 continue
 
-            # Move away from the side containing the nearest branch.
-            target_side = "right" if branch_side == "left" else "left"
+            state, target_side = self.choose_action(player_side, branch_side)
 
             if time.monotonic() - self.last_action >= ACTION_INTERVAL:
                 self.press(target_side)
+                self.pending_action = (state, target_side)
                 self.set_state_message(
                     f"Player: {player_side} | Nearest branch: {branch_side} | "
-                    f"Moving: {target_side}"
+                    f"Model chooses: {target_side}"
                 )
 
             time.sleep(LOOP_DELAY)

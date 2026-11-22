@@ -180,7 +180,11 @@ class LumberJackBot:
         x = self.window.left + int(self.window.width * 0.50)
         y = self.window.top + int(self.window.height * 0.77)
         pyautogui.click(x, y)
-        pyautogui.moveTo(0, 0, duration=0.05)
+        # Move away from the game without touching a screen corner.
+        screen_width, screen_height = pyautogui.size()
+        safe_x = max(1, screen_width - 60)
+        safe_y = max(1, screen_height - 60)
+        pyautogui.moveTo(safe_x, safe_y, duration=0.05)
         print("[INFO] Play/Retry button detected. Starting automatically.", flush=True)
         time.sleep(1.2)
 

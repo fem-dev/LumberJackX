@@ -14,7 +14,7 @@ from pynput.keyboard import Controller, Key, Listener
 from pynput.mouse import Listener as MouseListener
 
 
-WINDOW_PATTERN = re.compile(r"lumber\\s*jack", re.IGNORECASE)
+WINDOW_PATTERN = re.compile(r"lumber\s*jack", re.IGNORECASE)
 STOP_KEY = Key.esc
 ACTION_INTERVAL = 0.16
 PATCH_RADIUS = 5

@@ -27,6 +27,7 @@ LOOP_DELAY = 0.025
 MODEL_FILE = Path(__file__).with_name("lumberjack_dqn.zip")
 REPLAY_FILE = Path(__file__).with_name("lumberjack_replay_buffer.pkl")
 TRAINING_LOG = Path(__file__).with_name("training_log.jsonl")
+CHOCOLATE_FILE = Path(__file__).with_name("chocolate_balance.json")
 
 # HSV ranges tuned from the supplied game screenshots.
 GREEN_LOW = np.array([35, 60, 70], dtype=np.uint8)
@@ -64,6 +65,7 @@ class LumberJackBot:
         self.window: GameWindow | None = None
         self.last_action = 0.0
         self.last_state_message = ""
+        self.chocolates = self.load_chocolates()
         self.stop_requested = False
         self.listener = Listener(on_press=self.on_key_press)
         self.listener.start()
@@ -72,6 +74,12 @@ class LumberJackBot:
         if key == STOP_KEY:
             self.stop_requested = True
             return False
+
+    def load_chocolates(self) -> int:
+        try:
+            return int(json.loads(CHOCOLATE_FILE.read_text(encoding="utf-8")).get("total", 0))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return 0
 
     def find_window(self) -> GameWindow:
         visible_windows = []
@@ -353,15 +361,25 @@ class LumberJackEnv(gym.Env):
         return next_obs, reward, terminated, False, {}
 
     def log_reward(self, reward: float, outcome: str, action: str) -> None:
+        self.bot.chocolates += int(reward)
+        CHOCOLATE_FILE.write_text(
+            json.dumps({"total": self.bot.chocolates}, indent=2),
+            encoding="utf-8",
+        )
         entry = {
             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "action": action,
             "reward": int(reward),
             "outcome": outcome,
+            "chocolates_total": self.bot.chocolates,
         }
         with TRAINING_LOG.open("a", encoding="utf-8") as file:
             file.write(json.dumps(entry) + "\n")
-        print(f"[LEARN] {outcome}: {reward:+.0f} chocolates", flush=True)
+        print(
+            f"[LEARN] {outcome}: {reward:+.0f} chocolates | "
+            f"Balance: {self.bot.chocolates}",
+            flush=True,
+        )
 
     def close(self):
         return None

@@ -122,19 +122,41 @@ class LumberJackBot:
         return cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     def start_or_retry_button_visible(self, frame: np.ndarray) -> bool:
-        """Detect the large single Play/Retry button in the lower center."""
+        """
+        Detect the circular wood-colored restart button shown on the score screen.
+        The character remains visible on that screen, so this detector must not
+        depend on the player sprite disappearing.
+        """
         height, width = frame.shape[:2]
         hsv = self.hsv(frame)
-        mask = cv2.inRange(hsv, ORANGE_LOW, ORANGE_HIGH)
 
-        x1, x2 = int(width * 0.40), int(width * 0.60)
-        y1, y2 = int(height * 0.68), int(height * 0.86)
+        # The restart button is a large tan/orange circle near the lower center.
+        # Use a slightly wider hue/saturation range than the old detector.
+        low = np.array([5, 45, 100], dtype=np.uint8)
+        high = np.array([32, 255, 255], dtype=np.uint8)
+        mask = cv2.inRange(hsv, low, high)
+
+        x1, x2 = int(width * 0.32), int(width * 0.68)
+        y1, y2 = int(height * 0.62), int(height * 0.90)
         roi = mask[y1:y2, x1:x2]
         if roi.size == 0:
             return False
 
-        orange_ratio = cv2.countNonZero(roi) / float(roi.size)
-        return orange_ratio > 0.45
+        # Look for a substantial connected warm-colored region, not just a
+        # few orange pixels from the score/coin decorations.
+        count, _, stats, _ = cv2.connectedComponentsWithStats(roi, connectivity=8)
+        min_area = int(width * height * 0.008)
+        for index in range(1, count):
+            x, y, w, h, area = stats[index]
+            if area < min_area:
+                continue
+            aspect = w / float(max(h, 1))
+            if 0.65 <= aspect <= 1.45 and w >= width * 0.12 and h >= height * 0.10:
+                return True
+
+        # Fallback for a textured circle whose rings split into components.
+        ratio = cv2.countNonZero(roi) / float(roi.size)
+        return ratio > 0.16
 
     def detect_player_side(self, frame: np.ndarray) -> str | None:
         """Find the red-shirt player and return the side of the tree they occupy."""
@@ -364,11 +386,13 @@ class LumberJackEnv(gym.Env):
         button_visible = self.bot.start_or_retry_button_visible(frame)
         player_side = self.bot.detect_player_side(frame)
 
-        if button_visible and player_side is None:
+        if button_visible:
+            # On the score screen the lumberjack character is still drawn,
+            # so the restart button itself is the death/game-over signal.
             reward = -5.0
             terminated = True
             self.episode_steps = 0
-            self.log_reward(reward, "confirmed death screen", side)
+            self.log_reward(reward, "score screen / restart button detected", side)
             self.bot.click_play_or_retry()
             next_obs = np.zeros(2, dtype=np.float32)
         elif player_side is not None and not button_visible:

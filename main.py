@@ -10,12 +10,10 @@ import mss
 import numpy as np
 import pyautogui
 import pygetwindow as gw
-import pytesseract
 from pynput.keyboard import Controller, Key, Listener
 
 
 WINDOW_PATTERN = re.compile(r"lumber\s*jack", re.IGNORECASE)
-BUTTON_WORDS = {"play", "start", "replay", "again", "continue"}
 STOP_KEY = Key.esc
 
 
@@ -128,35 +126,46 @@ class LumberJackBot:
         threshold = max(7, int((x2 - x1) * 0.10))
         return int((row > 0).sum()) >= threshold
 
-    def find_text_button(self, frame: np.ndarray) -> tuple[int, int] | None:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        data = pytesseract.image_to_data(
-            gray, config="--psm 11", output_type=pytesseract.Output.DICT
-        )
+    @staticmethod
+    def find_start_button(frame: np.ndarray) -> tuple[int, int] | None:
+        """Find a prominent saturated rounded button without OCR or templates."""
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        h, w = hsv.shape[:2]
+        # Start/replay buttons are usually saturated and near the center of the game.
+        mask = cv2.inRange(hsv, np.array([0, 85, 75]), np.array([179, 255, 255]))
+        y1, y2 = int(h * 0.20), int(h * 0.82)
+        x1, x2 = int(w * 0.10), int(w * 0.90)
+        roi = mask[y1:y2, x1:x2]
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 5))
+        roi = cv2.morphologyEx(roi, cv2.MORPH_CLOSE, kernel)
+        contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         candidates = []
-        for i, raw in enumerate(data["text"]):
-            word = re.sub(r"[^a-z]", "", raw.lower())
-            if word not in BUTTON_WORDS:
+        for contour in contours:
+            bx, by, bw, bh = cv2.boundingRect(contour)
+            area = bw * bh
+            ratio = bw / max(1, bh)
+            if area < w * h * 0.008 or bw < w * 0.25 or bh < h * 0.035:
                 continue
-            try:
-                confidence = float(data["conf"][i])
-            except (TypeError, ValueError):
-                confidence = 0
-            if confidence < 35:
+            if not 1.4 <= ratio <= 6.5:
                 continue
-            x, y = int(data["left"][i]), int(data["top"][i])
-            bw, bh = int(data["width"][i]), int(data["height"][i])
-            candidates.append((confidence, (x + bw // 2, y + bh // 2)))
+            fill = cv2.contourArea(contour) / max(1, area)
+            if fill < 0.45:
+                continue
+            center_x = x1 + bx + bw // 2
+            center_y = y1 + by + bh // 2
+            # Prefer buttons around the vertical center of the game.
+            score = area - abs(center_y - h * 0.55) * w * 0.15
+            candidates.append((score, (center_x, center_y)))
         if not candidates:
             return None
         return max(candidates, key=lambda item: item[0])[1]
 
     def click_button_if_present(self, frame: np.ndarray) -> bool:
-        point = self.find_text_button(frame)
+        point = self.find_start_button(frame)
         if point is None:
             return False
         assert self.window is not None
-        print(f"[AUTO] دکمه بازی تشخیص داده شد؛ کلیک در {point}")
+        print(f"[AUTO] دکمه رنگی احتمالی شروع/تکرار پیدا شد: {point}")
         pyautogui.click(self.window.left + point[0], self.window.top + point[1])
         time.sleep(0.8)
         self.direction = None

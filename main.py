@@ -246,7 +246,7 @@ def main() -> int:
         bot.run()
         return 0
     except KeyboardInterrupt:
-        print("\\n[STOP] Stopped.", flush=True)
+        print("\n[STOP] Stopped.", flush=True)
         return 0
     except Exception as exc:
         print(f"[ERROR] {exc}", file=sys.stderr, flush=True)

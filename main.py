@@ -11,10 +11,15 @@ import numpy as np
 import pyautogui
 import pygetwindow as gw
 from pynput.keyboard import Controller, Key, Listener
+from pynput.mouse import Listener as MouseListener
 
 
-WINDOW_PATTERN = re.compile(r"lumber\s*jack", re.IGNORECASE)
+WINDOW_PATTERN = re.compile(r"lumber\\s*jack", re.IGNORECASE)
 STOP_KEY = Key.esc
+ACTION_INTERVAL = 0.16
+PATCH_RADIUS = 5
+DARK_PIXEL_THRESHOLD = 200
+BRANCH_PIXEL_RATIO = 0.22
 
 
 @dataclass
@@ -36,9 +41,9 @@ class LumberJackBot:
         self.keyboard = Controller()
         self.sct = mss.mss()
         self.window: GameWindow | None = None
-        self.direction: str | None = None
+        self.points: dict[str, tuple[int, int]] = {}
+        self.direction = "left"
         self.last_action = 0.0
-        self.action_interval = 0.16
         self.stop_requested = False
         self.listener = Listener(on_press=self.on_key_press)
         self.listener.start()
@@ -70,108 +75,50 @@ class LumberJackBot:
         shot = self.sct.grab(self.window.region)
         return cv2.cvtColor(np.asarray(shot), cv2.COLOR_BGRA2BGR)
 
-    @staticmethod
-    def brown_mask(frame: np.ndarray) -> np.ndarray:
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        return cv2.inRange(hsv, np.array([3, 55, 35]), np.array([28, 255, 220]))
-
-    @staticmethod
-    def find_tree_center(wood: np.ndarray) -> int | None:
-        h, w = wood.shape
-        x1, x2 = int(w * 0.25), int(w * 0.75)
-        y1, y2 = int(h * 0.20), int(h * 0.90)
-        scores = (wood[y1:y2, x1:x2] > 0).sum(axis=0)
-        if scores.size == 0:
-            return None
-        idx = int(np.argmax(scores))
-        if int(scores[idx]) < h * 0.12:
-            return None
-        return x1 + idx
-
-    @staticmethod
-    def find_player_head(frame: np.ndarray, tree_x: int) -> tuple[str, int] | None:
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, np.array([78, 12, 175]), np.array([112, 180, 255]))
-        h, w = mask.shape
-        mask[:int(h * 0.42), :] = 0
-        count, _, stats, centers = cv2.connectedComponentsWithStats(mask, 8)
-        candidates = []
-        for i in range(1, count):
-            x, y, cw, ch, area = stats[i]
-            cx, cy = centers[i]
-            if area < 12 or area > 2200 or ch < 3:
-                continue
-            if abs(cx - tree_x) < w * 0.025 or cy > h * 0.94:
-                continue
-            score = area - abs(cy - h * 0.73) * 0.08
-            candidates.append((score, "left" if cx < tree_x else "right", int(cy)))
-        if not candidates:
-            return None
-        _, side, y = max(candidates, key=lambda item: item[0])
-        return side, y
-
-    @staticmethod
-    def branch_on_side(wood: np.ndarray, tree_x: int, head_y: int, side: str) -> bool:
-        h, w = wood.shape
-        band = max(5, int(h * 0.012))
-        y1, y2 = max(0, head_y - band), min(h, head_y + band + 1)
-        reach, gap = int(w * 0.24), max(5, int(w * 0.035))
-        if side == "left":
-            x1, x2 = max(0, tree_x - reach), max(0, tree_x - gap)
-        else:
-            x1, x2 = min(w, tree_x + gap), min(w, tree_x + reach)
-        if x2 <= x1:
-            return False
-        row = wood[y1:y2, x1:x2]
-        threshold = max(10, int((x2 - x1) * 0.14))
-        return int((row > 0).sum()) >= threshold
-
-    @staticmethod
-    def find_start_button(frame: np.ndarray) -> tuple[int, int] | None:
-        """Find a prominent saturated rounded button without OCR or templates."""
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        h, w = hsv.shape[:2]
-        # Start/replay buttons are usually saturated and near the center of the game.
-        mask = cv2.inRange(hsv, np.array([0, 85, 75]), np.array([179, 255, 255]))
-        y1, y2 = int(h * 0.20), int(h * 0.82)
-        x1, x2 = int(w * 0.10), int(w * 0.90)
-        roi = mask[y1:y2, x1:x2]
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 5))
-        roi = cv2.morphologyEx(roi, cv2.MORPH_CLOSE, kernel)
-        contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        candidates = []
-        for contour in contours:
-            bx, by, bw, bh = cv2.boundingRect(contour)
-            area = bw * bh
-            ratio = bw / max(1, bh)
-            if area < w * h * 0.008 or bw < w * 0.25 or bh < h * 0.035:
-                continue
-            if not 1.4 <= ratio <= 6.5:
-                continue
-            fill = cv2.contourArea(contour) / max(1, area)
-            if fill < 0.45:
-                continue
-            center_x = x1 + bx + bw // 2
-            center_y = y1 + by + bh // 2
-            # Prefer buttons around the vertical center of the game.
-            score = area - abs(center_y - h * 0.55) * w * 0.15
-            candidates.append((score, (center_x, center_y)))
-        if not candidates:
-            return None
-        return max(candidates, key=lambda item: item[0])[1]
-
-    def click_button_if_present(self, frame: np.ndarray) -> bool:
-        point = self.find_start_button(frame)
-        if point is None:
-            return False
+    def capture_click(self, instruction: str) -> tuple[int, int]:
         assert self.window is not None
-        print(f"[AUTO] دکمه رنگی احتمالی شروع/تکرار پیدا شد: {point}")
-        pyautogui.click(self.window.left + point[0], self.window.top + point[1])
-        # Keep the pointer out of the game so it cannot cover the character or branches.
+        if self.stop_requested:
+            raise KeyboardInterrupt
+        print(instruction, flush=True)
+        result: list[tuple[int, int]] = []
+
+        def on_click(x, y, button, pressed):
+            if pressed:
+                result.append((int(x), int(y)))
+                return False
+
+        with MouseListener(on_click=on_click) as mouse_listener:
+            while mouse_listener.is_alive() and not self.stop_requested:
+                time.sleep(0.05)
+        if self.stop_requested or not result:
+            raise KeyboardInterrupt
+        x, y = result[0]
+        # Park the cursor outside the game immediately after calibration.
         pyautogui.moveTo(0, 0, duration=0.08)
-        time.sleep(0.8)
-        self.direction = None
-        return True
+        rel_x, rel_y = x - self.window.left, y - self.window.top
+        if not (0 <= rel_x < self.window.width and 0 <= rel_y < self.window.height):
+            raise RuntimeError("نقطه انتخاب‌شده خارج از پنجره بازی بود؛ دوباره اجرا کن.")
+        return rel_x, rel_y
+
+    def calibrate(self) -> None:
+        print("\n[SETUP] نشانگر موس را روی محل برخورد شاخه با سر بازیکن در سمت چپ ببر و یک بار کلیک کن.")
+        self.points["left"] = self.capture_click("[WAIT] کلیک نقطه سمت چپ...")
+        print("[OK] نقطه چپ ثبت شد.")
+        print("[SETUP] حالا محل متناظر در سمت راست را یک بار کلیک کن.")
+        self.points["right"] = self.capture_click("[WAIT] کلیک نقطه سمت راست...")
+        print("[OK] هر دو نقطه ثبت شدند؛ موس به گوشه صفحه منتقل شد.")
+        print("[TIP] این دو نقطه باید هم‌ارتفاع با محل سر بازیکن و جایی باشند که شاخه از آن عبور می‌کند.")
+
+    def branch_detected(self, frame: np.ndarray, side: str) -> bool:
+        x, y = self.points[side]
+        r = PATCH_RADIUS
+        patch = frame[max(0, y-r):min(frame.shape[0], y+r+1),
+                      max(0, x-r):min(frame.shape[1], x+r+1)]
+        if patch.size == 0:
+            return False
+        gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+        dark_ratio = float(np.mean(gray < DARK_PIXEL_THRESHOLD))
+        return dark_ratio >= BRANCH_PIXEL_RATIO
 
     def press(self, side: str) -> None:
         key = Key.left if side == "left" else Key.right
@@ -180,30 +127,61 @@ class LumberJackBot:
         self.direction = side
         self.last_action = time.monotonic()
 
-    def analyze_and_play(self, frame: np.ndarray) -> bool:
-        wood = self.brown_mask(frame)
-        tree_x = self.find_tree_center(wood)
-        if tree_x is None:
+    @staticmethod
+    def find_start_button(frame: np.ndarray) -> tuple[int, int] | None:
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        h, w = hsv.shape[:2]
+        mask = cv2.inRange(hsv, np.array([0, 85, 75]), np.array([179, 255, 255]))
+        y1, y2 = int(h * 0.20), int(h * 0.82)
+        x1, x2 = int(w * 0.10), int(w * 0.90)
+        roi = cv2.morphologyEx(
+            mask[y1:y2, x1:x2], cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (9, 5))
+        )
+        contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        candidates = []
+        for contour in contours:
+            bx, by, bw, bh = cv2.boundingRect(contour)
+            area = bw * bh
+            ratio = bw / max(1, bh)
+            if area < w*h*0.008 or bw < w*0.25 or bh < h*0.035:
+                continue
+            if not 1.4 <= ratio <= 6.5:
+                continue
+            if cv2.contourArea(contour) / max(1, area) < 0.45:
+                continue
+            cx, cy = x1 + bx + bw//2, y1 + by + bh//2
+            score = area - abs(cy - h*0.55) * w * 0.15
+            candidates.append((score, (cx, cy)))
+        return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+    def click_start_if_stable(self, frame: np.ndarray) -> bool:
+        point = self.find_start_button(frame)
+        if point is None:
             return False
-        player = self.find_player_head(frame, tree_x)
-        if player is None:
-            return False
-        side, head_y = player
-        if self.direction is None:
-            self.direction = side
-        blocked = self.branch_on_side(wood, tree_x, head_y, self.direction)
-        next_side = ("right" if self.direction == "left" else "left") if blocked else self.direction
-        if time.monotonic() - self.last_action >= self.action_interval:
-            self.press(next_side)
+        # Require the same button position to be present in several frames.
+        for _ in range(2):
+            time.sleep(0.06)
+            if self.stop_requested:
+                return False
+            next_point = self.find_start_button(self.capture())
+            if next_point is None or abs(next_point[0]-point[0]) > 20 or abs(next_point[1]-point[1]) > 20:
+                return False
+        assert self.window is not None
+        pyautogui.click(self.window.left + point[0], self.window.top + point[1])
+        pyautogui.moveTo(0, 0, duration=0.08)
+        time.sleep(0.7)
+        self.direction = "left"
+        self.last_action = time.monotonic()
+        print("[AUTO] دکمه شروع/تکرار کلیک شد.")
         return True
 
     def run(self) -> None:
         self.window = self.find_window()
-        print(f"[OK] پنجره پیدا شد: {self.window.title}")
-        print(f"[OK] اندازه پنجره: {self.window.width}x{self.window.height}")
-        print("[INFO] برای توقف هر زمان کلید Esc را بزن.")
-        start_candidate: tuple[int, int] | None = None
-        start_streak = 0
+        print(f"[OK] پنجره پیدا شد: {self.window.title} ({self.window.width}x{self.window.height})")
+        self.calibrate()
+        print(f"[INFO] سرعت حرکت: هر {ACTION_INTERVAL:.2f} ثانیه؛ توقف با Esc.")
+        print("[INFO] بازی را در صفحه نگه دار؛ بات وضعیت دو نقطه را بررسی می‌کند.")
         while not self.stop_requested:
             try:
                 self.window = self.find_window()
@@ -212,29 +190,16 @@ class LumberJackBot:
                 continue
             frame = self.capture()
 
-            # Prioritize gameplay analysis. Only consider a start/replay button
-            # after the player/tree could not be recognized for several frames.
-            if self.analyze_and_play(frame):
-                start_candidate = None
-                start_streak = 0
-                time.sleep(0.025)
+            # If a start/replay overlay is present, handle it before sending keys.
+            if self.click_start_if_stable(frame):
                 continue
 
-            point = self.find_start_button(frame)
-            if point is not None:
-                if start_candidate is not None and abs(point[0] - start_candidate[0]) < 24 and abs(point[1] - start_candidate[1]) < 24:
-                    start_streak += 1
-                else:
-                    start_candidate = point
-                    start_streak = 1
-                if start_streak >= 3 and self.click_button_if_present(frame):
-                    start_candidate = None
-                    start_streak = 0
-                    continue
-            else:
-                start_candidate = None
-                start_streak = 0
-            time.sleep(0.05)
+            blocked = self.branch_detected(frame, self.direction)
+            next_side = ("right" if self.direction == "left" else "left") if blocked else self.direction
+            if time.monotonic() - self.last_action >= ACTION_INTERVAL:
+                self.press(next_side)
+            time.sleep(0.025)
+
         print("[STOP] بات متوقف شد.")
 
     def close(self) -> None:
@@ -249,7 +214,7 @@ def main() -> int:
         bot.run()
         return 0
     except KeyboardInterrupt:
-        print("\n[STOP] توقف با Ctrl+C")
+        print("\n[STOP] توقف شد.")
         return 0
     except Exception as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)

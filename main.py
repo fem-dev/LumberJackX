@@ -13,7 +13,7 @@ import pygetwindow as gw
 from pynput.keyboard import Controller, Key, Listener
 
 
-WINDOW_PATTERN = re.compile(r"lumber\\s*jack", re.IGNORECASE)
+WINDOW_PATTERN = re.compile(r"lumber\s*jack", re.IGNORECASE)
 STOP_KEY = Key.esc
 
 ACTION_INTERVAL = 0.16

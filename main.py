@@ -127,55 +127,6 @@ class LumberJackBot:
         self.direction = side
         self.last_action = time.monotonic()
 
-    @staticmethod
-    def find_start_button(frame: np.ndarray) -> tuple[int, int] | None:
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        h, w = hsv.shape[:2]
-        mask = cv2.inRange(hsv, np.array([0, 85, 75]), np.array([179, 255, 255]))
-        y1, y2 = int(h * 0.20), int(h * 0.82)
-        x1, x2 = int(w * 0.10), int(w * 0.90)
-        roi = cv2.morphologyEx(
-            mask[y1:y2, x1:x2], cv2.MORPH_CLOSE,
-            cv2.getStructuringElement(cv2.MORPH_RECT, (9, 5))
-        )
-        contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        candidates = []
-        for contour in contours:
-            bx, by, bw, bh = cv2.boundingRect(contour)
-            area = bw * bh
-            ratio = bw / max(1, bh)
-            if area < w*h*0.008 or bw < w*0.25 or bh < h*0.035:
-                continue
-            if not 1.4 <= ratio <= 6.5:
-                continue
-            if cv2.contourArea(contour) / max(1, area) < 0.45:
-                continue
-            cx, cy = x1 + bx + bw//2, y1 + by + bh//2
-            score = area - abs(cy - h*0.55) * w * 0.15
-            candidates.append((score, (cx, cy)))
-        return max(candidates, key=lambda item: item[0])[1] if candidates else None
-
-    def click_start_if_stable(self, frame: np.ndarray) -> bool:
-        point = self.find_start_button(frame)
-        if point is None:
-            return False
-        # Require the same button position to be present in several frames.
-        for _ in range(2):
-            time.sleep(0.06)
-            if self.stop_requested:
-                return False
-            next_point = self.find_start_button(self.capture())
-            if next_point is None or abs(next_point[0]-point[0]) > 20 or abs(next_point[1]-point[1]) > 20:
-                return False
-        assert self.window is not None
-        pyautogui.click(self.window.left + point[0], self.window.top + point[1])
-        pyautogui.moveTo(0, 0, duration=0.08)
-        time.sleep(0.7)
-        self.direction = "left"
-        self.last_action = time.monotonic()
-        print("[AUTO] دکمه شروع/تکرار کلیک شد.")
-        return True
-
     def run(self) -> None:
         self.window = self.find_window()
         print(f"[OK] پنجره پیدا شد: {self.window.title} ({self.window.width}x{self.window.height})")
@@ -189,10 +140,6 @@ class LumberJackBot:
                 time.sleep(0.3)
                 continue
             frame = self.capture()
-
-            # If a start/replay overlay is present, handle it before sending keys.
-            if self.click_start_if_stable(frame):
-                continue
 
             blocked = self.branch_detected(frame, self.direction)
             next_side = ("right" if self.direction == "left" else "left") if blocked else self.direction

@@ -64,8 +64,6 @@ class LumberJackBot:
         self.window: GameWindow | None = None
         self.last_action = 0.0
         self.last_state_message = ""
-        self.model = self.load_model()
-        self.pending_action = None
         self.stop_requested = False
         self.listener = Listener(on_press=self.on_key_press)
         self.listener.start()
@@ -231,7 +229,7 @@ class LumberJackBot:
                 except Exception as exc:
                     print(f"[WARN] Could not load replay buffer: {exc}", flush=True)
         else:
-            print("[INFO] Creating a new DQN agent with an initial safe-side heuristic.", flush=True)
+            print("[INFO] Creating a new DQN agent. Initial actions will include exploration.", flush=True)
             model = DQN(
                 "MlpPolicy",
                 env,

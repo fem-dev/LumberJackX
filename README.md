@@ -15,23 +15,30 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-Before starting the bot, open the game in Telegram Desktop and enter the game screen. When the bot starts:
+Open the LumberJack Mini App in Telegram Desktop before running the bot. Keep the game window visible and do not minimize it.
 
-1. When prompted, click the LEFT detection point, level with the player's head. Choose the spot where a branch passes as it approaches.
-2. Click the matching detection point on the RIGHT side.
-3. After both points are saved, the cursor moves to the screen corner and the bot starts playing.
+The bot now attempts to:
+1. Find the game window automatically.
+2. Detect the large Play or Retry button and click it automatically.
+3. Detect the red-shirt player and the nearest green branch.
+4. Press the direction away from the nearest branch.
 
-Press `Esc` to stop the bot. If the game ends, restart the game manually. The calibration points remain saved until you close the program.
+No manual calibration clicks, EXE file, OCR, or Tesseract are required. Press `Esc` to stop the bot. The mouse is moved to the screen corner after an automatic Play/Retry click.
 
-No EXE file, OCR, or Tesseract is required. For later runs, activate the virtual environment inside the project folder and run `python main.py`. To get the latest changes, run `git pull` first.
+## Detection notes
 
-## Detection method
+The automatic detector uses OpenCV color masks and connected components based on the supplied game screenshots:
+- Green shapes above the grass platform are treated as branches.
+- The lowest visible branch is treated as the nearest branch.
+- The red player sprite is used to confirm that the gameplay screen is active.
+- A single orange/brown circular button near the lower center is treated as Play or Retry.
 
-- At startup, two fixed points where branches pass are calibrated.
-- In each frame, the bot checks a small area around the point on the current side instead of trying to identify the player's clothing color or locate the trunk.
-- If the proportion of dark pixels in that area exceeds the configured threshold, the bot changes direction.
-- The default action interval is `0.16` seconds. Thresholds and patch size can be adjusted near the top of `main.py`.
+The detector has not yet been validated across different Telegram window sizes, display scaling settings, animations, or game versions. If it does not detect the game correctly, send a screenshot of the game window and the terminal output.
 
-This method is simpler to calibrate than the previous broad color-detection approach, but it still needs to be tested with the actual game window size and appearance. If the points are selected incorrectly, or the branch and background colors differ, the thresholds may need adjustment.
+The default action interval is `0.16` seconds. To change it, edit `ACTION_INTERVAL` near the top of `main.py`.
 
-If PowerShell does not allow environment activation, run this command in the same window, then try activation again: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
+If PowerShell does not allow environment activation, run this command in the same window, then try activation again:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
